@@ -38,7 +38,7 @@ background removed in an image editing program:
   Background removed.
 </sub>
 
-The image can be rendered in with classic checkerboard process, in EGA colors:
+The image can be rendered with classic checkerboard process, in EGA colors:
 
 <img src="img/canvasman_ega_435.png" alt="Canvasman EGA" width="870"/><br>
 <sub>
