@@ -1,3 +1,8 @@
+/*
+ * A thread, a lock and a condition variable for the GUI's worker:
+ * pthreads, or Win32 on Windows.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
+ */
 #include "thread.h"
 
 #include <stdlib.h>
@@ -18,6 +23,7 @@ struct EgtSync {
     CONDITION_VARIABLE cond;
 };
 
+/* Calls fn(arg) with the signature the thread API wants. */
 static DWORD WINAPI trampoline(LPVOID p)
 {
     EgtThread *t = p;
@@ -83,6 +89,7 @@ struct EgtSync {
     pthread_cond_t cond;
 };
 
+/* Calls fn(arg) with the signature the thread API wants. */
 static void *trampoline(void *p)
 {
     EgtThread *t = p;

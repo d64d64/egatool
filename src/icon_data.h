@@ -1,5 +1,6 @@
 /* Window icon: the 32x32 EGAtool icon as RGBA8, for SetWindowIcon().
- * The same picture as the .exe icon, src/egatool.ico. */
+ * The same picture as the .exe icon, src/egatool.ico.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE. */
 #define ICON_W 32
 #define ICON_H 32
 static unsigned char ICON_RGBA[ICON_W * ICON_H * 4] = {

@@ -1,3 +1,8 @@
+/*
+ * Writes the settings that made an image as an egatool-cli command line,
+ * stored in saved PNGs.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
+ */
 #include "recipe.h"
 
 #include <stdarg.h>
@@ -30,6 +35,7 @@ typedef struct {
     bool failed;
 } Str;
 
+/* Appends printf-style text to s, growing it; marks s failed on error. */
 static void add(Str *s, const char *fmt, ...)
 {
     va_list ap;

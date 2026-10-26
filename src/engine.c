@@ -1,5 +1,7 @@
 /*
- * egatool engine implementation.
+ * EGAtool engine: built-in palettes, colour adjustments, Solid areas,
+ * and the dither modes (checkerboard, ordered, error diffusion, none).
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include "engine.h"
 #include "engine_int.h"
@@ -455,6 +457,7 @@ void egt_auto_levels(const EgtImage *img, EgtAdjust *adj)
         adj->contrast = 127;
 }
 
+/* Index of the palette colour nearest in RGB. */
 static int nearest(const EgtPalette *pal, int r, int g, int b)
 {
     int i, best = 0, best_d = 0x7fffffff;
@@ -869,6 +872,8 @@ bool egt_dither_supports_cleanup(EgtDither d)
     return d == EGT_DITHER_EGA_CHECKER || d == EGT_DITHER_NONE;
 }
 
+/* None: every pixel becomes its nearest palette colour, then specks under
+ * min_region pixels are cleaned up. */
 static bool convert_none(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
                          int min_region)
 {
@@ -915,6 +920,9 @@ static int dither_amount(const EgtPalette *pal, const uint8_t *s, int snap, int 
     return (int)((d - snap) * 256 / snap);
 }
 
+/* Ordered: a 4x4 Bayer threshold, scaled to the spacing of the palette's
+ * colours, is added to each pixel before the nearest colour is picked.
+ * Near a palette colour (Snap) the threshold fades out. */
 static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
 {
     static const int BAYER4[4][4] = {

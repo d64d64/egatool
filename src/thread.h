@@ -1,6 +1,7 @@
 /*
  * Minimal threads for the GUI's background conversion: pthreads, or Win32
  * on Windows (kept out of gui.c because windows.h clashes with raylib).
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_THREAD_H
 #define EGATOOL_THREAD_H

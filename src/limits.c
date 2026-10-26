@@ -1,5 +1,5 @@
 /*
- * egatool: hardware colour limits ("attribute clash").
+ * EGAtool: hardware colour limits ("attribute clash").
  *
  * Old machines limit how many colours a small area of the screen may use:
  * the ZX Spectrum 2 per 8x8 cell, the C64 3 per cell plus a background
@@ -21,6 +21,8 @@
  * 4. Drawing: each pixel is dithered with its own cell's colours only, and
  *    error diffusion passes on only the error those colours can work off
  *    (no "add red" piling up in a cell that has no red).
+ *
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -55,6 +57,7 @@ static const LimitDef LIMITS[EGT_LIMIT_COUNT] = {
       16, 16, 1, 3, true, 4, false, EGT_PAL_NES, 256, 240 },
 };
 
+/* The rules for a limit; None for values out of range. */
 static const LimitDef *limit_def(EgtLimit l)
 {
     return &LIMITS[l > EGT_LIMIT_NONE && l < EGT_LIMIT_COUNT ? l : EGT_LIMIT_NONE];
@@ -136,6 +139,8 @@ typedef struct {
 
 #define MIX_STEPS 3
 
+/* Position of the colour pair (i, j), in either order, in a flat list of
+ * all pairs. */
 static int pair_index(const Ctx *c, int i, int j)
 {
     if (i > j) {
@@ -146,6 +151,7 @@ static int pair_index(const Ctx *c, int i, int j)
     return i * c->n - i * (i + 1) / 2 + (j - i - 1);
 }
 
+/* sRGB level 0..255 to linear light 0..1. */
 static float lin(float c)
 {
     c /= 255.0f;
@@ -208,6 +214,8 @@ static int quick_sub(const Ctx *c)
     return sub < 2 ? 2 : sub;
 }
 
+/* A cell's pixel rectangle, clipped at the image edge (the last row and
+ * column of cells may be partial). */
 static void cell_bounds(const Ctx *c, int cell, int *x0, int *y0, int *x1, int *y1)
 {
     int cx = cell % c->cw, cy = cell / c->cw;
@@ -337,6 +345,7 @@ static int top_colours(const Ctx *c, const float *votes, int exclude, int max, i
     return m;
 }
 
+/* Spectrum: a set may not mix normal and bright colours (black is both). */
 static bool bright_ok(const Ctx *c, const CSet *s)
 {
     int i, g = 0;
@@ -429,6 +438,10 @@ static int prune_options(Option *o, int n, int keep)
     return keep;
 }
 
+/* Candidate colour sets for one cell, scored. Two-colour cells with small
+ * palettes try every pair (on a sample of pixels, then the best few on
+ * all); otherwise sets are built from the colours the cell's pixels want
+ * most. */
 static int cell_options(const Ctx *c, int cell, int bg, int max_cand, int sub, Option *out)
 {
     float votes[EGT_MAX_COLORS] = {0};
@@ -452,6 +465,7 @@ static int cell_options(const Ctx *c, int cell, int bg, int max_cand, int sub, O
     return prune_options(out, make_options(c, &cell, 1, cand, m, bg, sub, out), KEEP_OPT);
 }
 
+/* Index of the cheapest option. */
 static int best_option(const Option *o, int n)
 {
     int i, b = 0;
@@ -681,12 +695,17 @@ static float snap_amount(float d2, int snap)
     return (d - snap) / snap;
 }
 
+/* Power mean of two levels: g = 1 averages the values; higher g leans
+ * towards the brighter one, as averaging emitted light does. */
 static float gamma_mix_f(float a, float b, double g)
 {
     double m = (pow(a / 255.0, g) + pow(b / 255.0, g)) / 2;
     return (float)(255.0 * pow(m, 1.0 / g));
 }
 
+/* Draws the result: each pixel dithered with its own cell's colours only.
+ * Error diffusion skips neighbours in cells with a different set, so no
+ * seams form along cell edges. */
 static void draw(const Ctx *c, const CSet *sets, const EgtConvertOptions *opt,
                  const Kernel *kernel, uint8_t *out, float *err)
 {
@@ -826,6 +845,8 @@ static bool classify_bright(Ctx *c, const EgtPalette *pal)
     return true;
 }
 
+/* Converts with a hardware limit: global choices, per-cell sets, sweeps
+ * for consistency, then drawing (see the comment at the top). */
 bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
                           const EgtConvertOptions *opt, const Kernel *kernel)
 {

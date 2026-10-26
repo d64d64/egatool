@@ -1,5 +1,6 @@
 /*
- * egatool engine internals shared between engine.c and limits.c.
+ * EGAtool engine internals shared between engine.c and limits.c.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_ENGINE_INT_H
 #define EGATOOL_ENGINE_INT_H
@@ -41,6 +42,7 @@ static const Kernel KERNEL_STUCKI = { 42, 12, {
  * their RGB distances from the source. */
 bool egt__keep_solid(float solid_dist, float mix_dist, int prefer_solid);
 
+/* Conversion with a hardware colour limit (limits.c), for egt_convert(). */
 bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
                           const EgtConvertOptions *opt, const Kernel *kernel);
 

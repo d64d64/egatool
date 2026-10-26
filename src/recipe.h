@@ -1,6 +1,7 @@
 /*
  * The settings that made an image, written as a egatool-cli command line
  * and stored in saved PNGs, so a result can be reproduced or inspected.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_RECIPE_H
 #define EGATOOL_RECIPE_H

@@ -1,5 +1,7 @@
 /*
- * egatool: raylib/raygui front end.
+ * EGAtool GUI: raylib/raygui window with the settings panel and the
+ * Before/After views; conversions run on a worker thread.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include <math.h>
 #include <stdio.h>
@@ -222,6 +224,7 @@ static bool has_ext(const char *path, const char *ext)
     return dot && strcmp(TextToLower(dot), ext) == 0;
 }
 
+/* Puts an image on the GPU, reusing the texture if the size is unchanged. */
 static void upload(Layer *layer, const EgtImage *img)
 {
     Texture2D *tex = &layer->tex;
@@ -244,6 +247,8 @@ static void unload_layer(Layer *layer)
         UnloadTexture(layer->tex);
 }
 
+/* Drops one reference to a source image. The worker holds its own while
+ * converting, so the image is freed by whichever side lets go last. */
 static void release_source(Worker *wk, SourceRef *src)
 {
     egt_sync_lock(wk->sync);
@@ -254,6 +259,7 @@ static void release_source(Worker *wk, SourceRef *src)
     egt_sync_unlock(wk->sync);
 }
 
+/* Makes img (taken over) the new source image and resets the adjustments. */
 static void set_source(App *app, EgtImage img, const char *name)
 {
     SourceRef *src = malloc(sizeof *src);
@@ -337,6 +343,7 @@ static EgtImage export_image(const App *app)
     return egt_resize_nearest(&app->output, app->output.width * k, app->output.height * k);
 }
 
+/* Frees an image from export_image(), unless it is the output itself. */
 static void export_free(const App *app, EgtImage *img)
 {
     if (img->pixels != app->output.pixels)
@@ -345,6 +352,7 @@ static void export_free(const App *app, EgtImage *img)
 
 static char *output_recipe(const App *app, const char *out_path);
 
+/* Saves img with the settings that made it (in a PNG comment). */
 static bool save_with_recipe(const App *app, const char *path, const EgtImage *img)
 {
     char *comment = output_recipe(app, path);
@@ -398,6 +406,8 @@ static void copy_output(App *app)
     export_free(app, &img);
 }
 
+/* The palette chosen in the panel: the loaded .pal file, or a built-in
+ * one filled into tmp. */
 static const EgtPalette *current_palette(App *app, EgtPalette *tmp)
 {
     if (app->pal_index == PAL_LOADED && app->have_loaded_pal)
@@ -491,6 +501,8 @@ static bool run_job(Worker *wk, const Job *job, EgtImage *prepared, EgtImage *ou
     return egt_convert(prepared, output, &job->pal, &opt);
 }
 
+/* Worker thread: waits for a job, converts it without holding the lock,
+ * and leaves the result for the main loop (replacing one not yet taken). */
 static void worker_main(void *arg)
 {
     Worker *wk = arg;
@@ -966,6 +978,7 @@ static Layer *before_layer(App *app)
     return &app->scaled;
 }
 
+/* Draws the Before, After or Split view with its labels. */
 static void draw_view(App *app)
 {
     Rectangle a[2];
@@ -1043,6 +1056,8 @@ static float column(Rectangle view, float scroll_x, int index, const char *title
     return view.y + 26;
 }
 
+/* The settings panel: one column per group of controls. Dropdowns come
+ * last so their open lists cover the controls below them. */
 static void draw_panel(App *app)
 {
     bool dropdown_open = app->res_edit || app->dither_edit || app->pal_edit || app->limit_edit;

@@ -1,6 +1,7 @@
 /*
  * Image file loading/saving via stb_image (static, so it cannot clash with
  * the copy inside raylib).
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_IMAGEIO_H
 #define EGATOOL_IMAGEIO_H

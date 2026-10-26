@@ -1,5 +1,6 @@
 /*
- * egatool pre-processing: area resize, smoothing and outline inking.
+ * EGAtool pre-processing: area resize, smoothing and outline inking.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include "engine.h"
 
@@ -40,6 +41,8 @@ static void box_taps_free(BoxTaps *t)
     free(t->weight);
 }
 
+/* For each output position along one axis: the source pixels it covers
+ * and their weights, for area-average resizing. */
 static bool box_taps(BoxTaps *t, int src_n, int dst_n)
 {
     double scale = (double)src_n / dst_n;
@@ -383,6 +386,7 @@ EgtImage egt_detail_image(const EgtImage *source, int width, int height)
     return egt_image_copy(source);
 }
 
+/* Darkens the masked pixels; darkness 1 makes them black. */
 static void apply_mask(EgtImage *img, const uint8_t *mask, float darkness)
 {
     size_t i, n = (size_t)img->width * img->height;
@@ -556,6 +560,9 @@ uint8_t *egt_outline_mask_hires(const EgtImage *source, int width, int height,
     return mask;
 }
 
+/* Canny edge detection on source: blur, gradient, thinning to one-pixel
+ * ridges, and hysteresis (weak edges kept only where they continue
+ * strong ones). The edges are then reduced to a width x height mask. */
 static uint8_t *outline_mask_canny(const EgtImage *source, int width, int height,
                                    int sensitivity)
 {

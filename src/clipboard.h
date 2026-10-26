@@ -1,6 +1,7 @@
 /*
  * Image clipboard. Native on Windows; on Linux it uses wl-paste/wl-copy or
  * xclip when installed.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_CLIPBOARD_H
 #define EGATOOL_CLIPBOARD_H

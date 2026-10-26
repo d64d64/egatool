@@ -1,3 +1,8 @@
+/*
+ * Image clipboard: Win32 on Windows; on Linux, wl-paste/wl-copy (Wayland)
+ * or xclip (X11) run as separate programs, with PNG data through a pipe.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
+ */
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -112,6 +117,7 @@ bool egt_clipboard_set_image(const EgtImage *img)
 
 #include <stdio.h>
 
+/* Whether a program is installed (on the PATH). */
 static bool have_command(const char *name)
 {
     char cmd[128];
@@ -119,6 +125,7 @@ static bool have_command(const char *name)
     return system(cmd) == 0;
 }
 
+/* A Wayland session: use wl-paste/wl-copy rather than xclip. */
 static bool use_wayland(void)
 {
     const char *wl = getenv("WAYLAND_DISPLAY");
@@ -159,6 +166,7 @@ EgtImage egt_clipboard_get_image(void)
     return img;
 }
 
+/* PNG encoder output, sent to the clipboard program's input. */
 static void write_to_pipe(void *ctx, void *data, int size)
 {
     fwrite(data, 1, (size_t)size, (FILE *)ctx);

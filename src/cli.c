@@ -1,5 +1,7 @@
 /*
- * egatool-cli: command line front end for the egatool engine.
+ * EGAtool command line tool (egatool-cli): converts one image with the
+ * given options and saves it with those settings in a PNG comment.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include <ctype.h>
 #include <math.h>
@@ -13,6 +15,7 @@
 #include "recipe.h"
 
 
+/* Case-insensitive compare (strcasecmp is POSIX, not standard C). */
 static int strcasecmp_ascii(const char *a, const char *b)
 {
     for (; *a && *b; a++, b++) {

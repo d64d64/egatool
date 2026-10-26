@@ -1,3 +1,8 @@
+/*
+ * Image files: loading with stb_image, saving PNG (optionally with a text
+ * comment), BMP or TGA with stb_image_write.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
+ */
 #include "imageio.h"
 
 #include <stdio.h>
@@ -69,6 +74,7 @@ const char *egt_load_error(void)
     return stbi_failure_reason();
 }
 
+/* Case-insensitive file extension check. */
 static bool has_ext(const char *path, const char *ext)
 {
     size_t lp = strlen(path), le = strlen(ext), i;

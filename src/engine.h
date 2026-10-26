@@ -1,6 +1,7 @@
 /*
- * egatool engine: palette reduction and dithering on RGBA8 buffers.
+ * EGAtool engine: palette reduction and dithering on RGBA8 buffers.
  * No dependencies beyond the C standard library.
+ * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #ifndef EGATOOL_ENGINE_H
 #define EGATOOL_ENGINE_H
