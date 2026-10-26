@@ -38,7 +38,7 @@ background removed in an image editing program:
   Background removed.
 </sub>
 
-The image can be rendered with classic checkerboard process, in EGA colors:
+The image can be rendered with classic checkerboard process, in EGA colours:
 
 <img src="img/canvasman_ega_435.png" alt="Canvasman EGA" width="870"/><br>
 <sub>
@@ -50,7 +50,7 @@ The image can be rendered with classic checkerboard process, in EGA colors:
 
 (Saved with 2x pixel size to better see the detail.)
 
-Or with ordered dithering in CGA colors, using solid colour detection:
+Or with ordered dithering in CGA colours, using solid colour detection:
 
 <img src="img/canvasman_cga_294.png" alt="Canvasman CGA" width="882"/><br>
 <sub>
@@ -62,9 +62,9 @@ Or with ordered dithering in CGA colors, using solid colour detection:
 
 (Saved with 3x pixel size.)
 
-Image can be colored according to constraints 8bit era platforms had. Below
+Image can be coloured according to constraints 8bit era platforms had. Below
 example conforms to palette and limitations of the C64 high resolution mode:
-only 2 colors in each 8x8 pixel cell. Burkes error diffusion. Saved in 2x pixel
+only 2 colours in each 8x8 pixel cell. Burkes error diffusion. Saved in 2x pixel
 size.
 
 <img src="img/areatza-c64hr-2x.png" alt="Areatza C64" width="640"/><br>
