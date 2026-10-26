@@ -115,6 +115,7 @@ bool egt_clipboard_set_image(const EgtImage *img)
 
 #else
 
+#include <signal.h>
 #include <stdio.h>
 
 /* Whether a program is installed (on the PATH). */
@@ -184,8 +185,20 @@ bool egt_clipboard_set_image(const EgtImage *img)
         cmd = "xclip -selection clipboard -t image/png -i";
     if (!cmd || !(p = popen(cmd, "w")))
         return false;
-    ok = egt_encode_png(img, write_to_pipe, p);
-    return pclose(p) == 0 && ok;
+    /* If the program exits before reading everything, writing would raise
+     * SIGPIPE and end EGAtool; ignored, the write just fails. */
+    {
+        struct sigaction ign, old;
+        memset(&ign, 0, sizeof ign);
+        ign.sa_handler = SIG_IGN;
+        sigemptyset(&ign.sa_mask);
+        sigaction(SIGPIPE, &ign, &old);
+        ok = egt_encode_png(img, write_to_pipe, p);
+        ok = fflush(p) == 0 && !ferror(p) && ok;
+        ok = pclose(p) == 0 && ok;
+        sigaction(SIGPIPE, &old, NULL);
+    }
+    return ok;
 }
 
 #endif
