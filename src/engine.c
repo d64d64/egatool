@@ -162,7 +162,7 @@ static const EgtColor DB32_COLORS[32] = {
 };
 
 static const char *DITHER_NAMES[EGT_DITHER_COUNT] = {
-    "Checkerboard", "Ordered", "Burkes", "Floyd-Steinberg",
+    "Checkerboard", "Ordered", "Ordered 2-colour", "Burkes", "Floyd-Steinberg",
     "Sierra", "Stucki", "None",
 };
 
@@ -920,42 +920,6 @@ static int dither_amount(const EgtPalette *pal, const uint8_t *s, int snap, int 
     return (int)((d - snap) * 256 / snap);
 }
 
-/* Ordered dithering by Thomas Knoll's pattern method: for each pixel a
- * plan of 16 palette colours is built whose average approaches the pixel
- * (each step picks the colour nearest to the pixel plus the error so far),
- * the plan is sorted by brightness, and the 4x4 Bayer matrix picks one
- * entry. Works for any palette, including colours told apart by hue alone
- * (purple from red and blue). Near a palette colour (Snap) it fades out. */
-static int luma(EgtColor c)
-{
-    return 299 * c.r + 587 * c.g + 114 * c.b;
-}
-
-/* The sorted plan for one colour (amount: how much dithering, 0..256). */
-static void ordered_plan(const EgtPalette *pal, const uint8_t *s, int amount, uint8_t *plan)
-{
-    int i, j, er = 0, eg = 0, eb = 0;
-    for (i = 0; i < 16; i++) {
-        int c = nearest(pal, clamp8(s[0] + er * amount / 256), clamp8(s[1] + eg * amount / 256),
-                        clamp8(s[2] + eb * amount / 256));
-        plan[i] = (uint8_t)c;
-        er += s[0] - pal->colors[c].r;
-        eg += s[1] - pal->colors[c].g;
-        eb += s[2] - pal->colors[c].b;
-    }
-    /* Insertion sort by brightness (16 entries). */
-    for (i = 1; i < 16; i++) {
-        uint8_t c = plan[i];
-        int l = luma(pal->colors[c]);
-        for (j = i; j > 0 && luma(pal->colors[plan[j - 1]]) > l; j--)
-            plan[j] = plan[j - 1];
-        plan[j] = c;
-    }
-}
-
-/* Plans are cached by colour: pictures repeat colours a lot. */
-#define PLAN_CACHE 65536
-
 static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
 {
     static const int BAYER4[4][4] = {
@@ -964,38 +928,137 @@ static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette
         { 3, 11,  1,  9},
         {15,  7, 13,  5},
     };
-    uint32_t *keys = malloc(PLAN_CACHE * sizeof *keys);
-    uint8_t (*plans)[16] = malloc(PLAN_CACHE * sizeof *plans);
+    /* Roughly the distance between neighbouring palette colours. */
+    int spread = (int)(255.0 / cbrt((double)pal->count));
+    int x, y, k;
+    for (y = 0; y < src->height; y++) {
+        for (x = 0; x < src->width; x++) {
+            size_t o = ((size_t)y * src->width + x) * 4;
+            const uint8_t *s = src->pixels + o;
+            int amount = dither_amount(pal, s, snap, &k);
+            int t = (BAYER4[y & 3][x & 3] * 2 - 15) * spread / 32 * amount / 256;
+            if (amount > 0)
+                k = nearest(pal, clamp8(s[0] + t), clamp8(s[1] + t), clamp8(s[2] + t));
+            put(dst->pixels + o, pal->colors[k]);
+        }
+    }
+}
+
+/* Ordered 2-colour: each colour is drawn as a mix of two palette colours
+ * in 16ths, the 4x4 Bayer matrix deciding which pixels get the second.
+ * The pair and ratio are those coming closest to the colour, among its
+ * nearest palette colours, with a small penalty for mixing far-apart
+ * colours (calmer patterns). Unlike Ordered, which moves colours along
+ * the grey axis, it mixes colours told apart by hue (a sky between light
+ * blue and cyan, purple between red and blue). */
+#define ORDERED_NEAR 12
+/* Penalty per squared distance between a pair's colours: enough to keep
+ * shading calm, small enough not to flatten it (tested by eye on CGA and
+ * EGA conversions). */
+#define ORDERED_PENALTY 0.02f
+
+static int luma(EgtColor c)
+{
+    return 299 * c.r + 587 * c.g + 114 * c.b;
+}
+
+/* Best pair and the 16ths of the second colour (*m, 0..16). The darker
+ * colour comes first, so in a gradient the lighter one fills the same
+ * Bayer positions as it grows and the pattern stays regular. */
+static void ordered_mix(const EgtPalette *pal, const uint8_t *s, int *a_out, int *b_out, int *m_out)
+{
+    int near[ORDERED_NEAR] = {0}, dist[ORDERED_NEAR] = {0}, nn = 0, i, j;
+    int n = pal->count < ORDERED_NEAR ? pal->count : ORDERED_NEAR;
+    float best;
+    /* The n nearest colours, by insertion. */
+    for (i = 0; i < pal->count; i++) {
+        int dr = s[0] - pal->colors[i].r, dg = s[1] - pal->colors[i].g, db = s[2] - pal->colors[i].b;
+        int d = dr * dr + dg * dg + db * db;
+        if (nn == n && d >= dist[nn - 1])
+            continue;
+        if (nn < n)
+            nn++;
+        for (j = nn - 1; j > 0 && dist[j - 1] > d; j--) {
+            dist[j] = dist[j - 1];
+            near[j] = near[j - 1];
+        }
+        dist[j] = d;
+        near[j] = i;
+    }
+    *a_out = *b_out = near[0];
+    *m_out = 0;
+    best = (float)dist[0];
+    for (i = 0; i < nn; i++)
+        for (j = 0; j < nn; j++) {
+            const EgtColor *a = &pal->colors[near[i]], *b = &pal->colors[near[j]];
+            int li = luma(*a), lj = luma(*b), m;
+            float ab[3] = { (float)(b->r - a->r), (float)(b->g - a->g), (float)(b->b - a->b) };
+            float as[3] = { (float)(s[0] - a->r), (float)(s[1] - a->g), (float)(s[2] - a->b) };
+            float len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2], t, e, e0, e1, e2;
+            if (i == j || len2 <= 0 || li > lj || (li == lj && near[i] > near[j]))
+                continue; /* each pair once, darker first (ties by index) */
+            t = (as[0] * ab[0] + as[1] * ab[1] + as[2] * ab[2]) / len2;
+            m = (int)lroundf(t * 16);
+            m = m < 0 ? 0 : m > 16 ? 16 : m;
+            e0 = as[0] - ab[0] * m / 16;
+            e1 = as[1] - ab[1] * m / 16;
+            e2 = as[2] - ab[2] * m / 16;
+            e = e0 * e0 + e1 * e1 + e2 * e2 + ORDERED_PENALTY * len2;
+            if (e < best) {
+                best = e;
+                *a_out = near[i];
+                *b_out = near[j];
+                *m_out = m;
+            }
+        }
+}
+
+/* Mixes are cached by colour: pictures repeat colours a lot. */
+#define MIX_CACHE 65536
+
+static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
+{
+    static const int BAYER4[4][4] = {
+        { 0,  8,  2, 10},
+        {12,  4, 14,  6},
+        { 3, 11,  1,  9},
+        {15,  7, 13,  5},
+    };
+    uint32_t *keys = malloc(MIX_CACHE * sizeof *keys);
+    uint8_t (*mixes)[3] = malloc(MIX_CACHE * sizeof *mixes);
     int x, y, k;
     if (keys)
-        for (k = 0; k < PLAN_CACHE; k++)
-            keys[k] = 0xffffffffu; /* empty: amount is at most 256 */
+        for (k = 0; k < MIX_CACHE; k++)
+            keys[k] = 0xffffffffu; /* never a colour key (top byte is 0) */
     for (y = 0; y < src->height; y++) {
         for (x = 0; x < src->width; x++) {
             size_t o = ((size_t)y * src->width + x) * 4;
             const uint8_t *s = src->pixels + o;
             int amount = dither_amount(pal, s, snap, &k);
             if (amount > 0) {
-                uint8_t own[16], *plan = own;
-                if (keys && plans) {
-                    uint32_t key = (uint32_t)s[0] << 16 | (uint32_t)s[1] << 8 | s[2];
-                    uint32_t h = (key * 2654435761u) >> 16;
-                    key |= (uint32_t)(amount - 1) << 24; /* amount 1..256 fits in 8 bits */
-                    plan = plans[h];
-                    if (keys[h] != key) {
-                        ordered_plan(pal, s, amount, plan);
-                        keys[h] = key;
-                    }
+                int a, b, m;
+                uint32_t key = (uint32_t)s[0] << 16 | (uint32_t)s[1] << 8 | s[2];
+                uint32_t h = (key * 2654435761u) >> 16;
+                if (keys && mixes && keys[h] == key) {
+                    a = mixes[h][0];
+                    b = mixes[h][1];
+                    m = mixes[h][2];
                 } else {
-                    ordered_plan(pal, s, amount, plan);
+                    ordered_mix(pal, s, &a, &b, &m);
+                    if (keys && mixes) {
+                        keys[h] = key;
+                        mixes[h][0] = (uint8_t)a;
+                        mixes[h][1] = (uint8_t)b;
+                        mixes[h][2] = (uint8_t)m;
+                    }
                 }
-                k = plan[BAYER4[y & 3][x & 3]];
+                k = BAYER4[y & 3][x & 3] < (m * amount + 128) / 256 ? b : a;
             }
             put(dst->pixels + o, pal->colors[k]);
         }
     }
     free(keys);
-    free(plans);
+    free(mixes);
 }
 
 /* Error diffusion with a rolling buffer of 3 error rows, padded by 2 pixels
@@ -1400,6 +1463,7 @@ bool egt_convert(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
     switch (opt->dither) {
     case EGT_DITHER_NONE:            return convert_none(src, dst, pal, opt->min_region);
     case EGT_DITHER_ORDERED:         convert_ordered(src, dst, pal, opt->snap); return true;
+    case EGT_DITHER_ORDERED2:        convert_ordered2(src, dst, pal, opt->snap); return true;
     case EGT_DITHER_BURKES:          return convert_diffuse(src, dst, pal, &KERNEL_BURKES, opt->snap);
     case EGT_DITHER_FLOYD_STEINBERG: return convert_diffuse(src, dst, pal, &KERNEL_FLOYD, opt->snap);
     case EGT_DITHER_SIERRA:          return convert_diffuse(src, dst, pal, &KERNEL_SIERRA, opt->snap);

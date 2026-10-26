@@ -67,7 +67,7 @@ static int text_width(const char *text)
 }
 
 static const char *DITHER_ITEMS =
-    "Checkerboard;Ordered;Burkes;Floyd-Steinberg;Sierra;Stucki;None";
+    "Checkerboard;Ordered;Ordered 2-colour;Burkes;Floyd-Steinberg;Sierra;Stucki;None";
 
 /* Palette dropdown: the built-ins (indices = EgtBuiltinPalette), then a
  * loaded palette file if there is one. */

@@ -171,9 +171,11 @@ Palette used can be chosen from the dropdown list.
 ### Dither modes
 
 - **Ordered** – a fixed 4×4 Bayer pattern. Even, regular cross-hatching that
-  stays put when the picture changes. Each pixel's colour is matched with a
-  mix of palette colours (Knoll's pattern dithering), so it works with any
-  palette.
+  stays put when the picture changes.
+- **Ordered 2-colour** – the same pattern, but each colour is drawn as a mix
+  of the two palette colours that match it best. Calmer, and truer to colours
+  that lie between palette colours of different hue (a sky between light blue
+  and cyan), where Ordered can give a busy pattern or a flat wrong colour.
 - **Burkes** – error diffusion over two rows. Smooth and fairly clean, with
   less noise than the larger kernels. Often the most pleasant on photos.
 - **Floyd-Steinberg** – the classic error diffusion, spreading each pixel's
@@ -326,7 +328,7 @@ adjustments, i.e. what the converter actually sees.
     egatool-cli [options] input output
       -p, --palette ega|vga|cga|cga-warm|ega64|cpc|c64|spectrum|msx|
                     apple2|gameboy|nes|db32|pico8|FILE.pal
-      -d, --dither  checker|ordered|burkes|floyd|sierra|stucki|none
+      -d, --dither  checker|ordered|ordered2|burkes|floyd|sierra|stucki|none
           --prefer-solid N checker: how much closer a checkerboard must come
                            than the nearest solid colour, 0..100 (default 16;
                            -b N from earlier versions is read as N / 25)

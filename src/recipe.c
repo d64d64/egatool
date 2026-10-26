@@ -16,7 +16,7 @@ static const char *PALETTE_ARGS[EGT_PAL_COUNT] = {
 };
 
 static const char *DITHER_ARGS[EGT_DITHER_COUNT] = {
-    "checker", "ordered", "burkes", "floyd", "sierra", "stucki", "none",
+    "checker", "ordered", "ordered2", "burkes", "floyd", "sierra", "stucki", "none",
 };
 
 const char *egt_builtin_palette_arg(EgtBuiltinPalette p)

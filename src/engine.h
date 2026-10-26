@@ -49,6 +49,7 @@ typedef enum {
 typedef enum {
     EGT_DITHER_EGA_CHECKER, /* solid colours and 2-colour checkerboards, the Sierra/LucasArts EGA look */
     EGT_DITHER_ORDERED,
+    EGT_DITHER_ORDERED2, /* two-colour mixes: also for colours told apart by hue */
     EGT_DITHER_BURKES,
     EGT_DITHER_FLOYD_STEINBERG,
     EGT_DITHER_SIERRA,
