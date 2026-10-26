@@ -37,6 +37,7 @@ static void usage(void)
 {
     int i;
     fprintf(stderr,
+        "EGAtool " EGT_VERSION "\n"
         "usage: egatool-cli [options] input output\n"
         "  -p, --palette NAME   ");
     for (i = 0; i < EGT_PAL_COUNT; i++)
@@ -95,6 +96,7 @@ static void usage(void)
         "                       --limit), default off\n"
         "  -x, --scale N        save enlarged N times (1..8, pixel-exact), default 1\n"
         "  -v, --verbose        print timing and the saved settings\n"
+        "      --version        print the version\n"
         "Output format follows the extension: .png, .bmp or .tga. PNGs record\n"
         "the settings used, as this command line, in a Comment text chunk.\n");
 }
@@ -223,6 +225,9 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) {
             verbose = 1;
+        } else if (!strcmp(a, "--version")) {
+            printf("egatool-cli %s\n", EGT_VERSION);
+            return 0;
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             usage();
             return 0;

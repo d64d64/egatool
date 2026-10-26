@@ -1529,7 +1529,7 @@ int main(int argc, char **argv)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);
     /* Wide enough for every panel column, but within the screen. */
-    InitWindow(1720, 960, "EGAtool");
+    InitWindow(1720, 960, "EGAtool " EGT_VERSION);
     {
         /* Title bar and taskbar icon (the .exe resource only covers Explorer). */
         Image icon = { ICON_RGBA, ICON_W, ICON_H, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };

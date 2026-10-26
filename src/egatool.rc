@@ -1,1 +1,28 @@
+#include <winver.h>
+
 1 ICON "egatool.ico"
+
+/* Shown in the .exe's Properties > Details. */
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "EGAtool image converter"
+            VALUE "FileVersion", "1.0"
+            VALUE "ProductName", "EGAtool"
+            VALUE "ProductVersion", "1.0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 d64d64, zlib licence"
+            VALUE "OriginalFilename", "egatool.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

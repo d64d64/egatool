@@ -360,6 +360,7 @@ adjustments, i.e. what the converter actually sees.
                            not with --limit)
       -x, --scale N        save enlarged N times (1..8, pixel-exact)
       -v, --verbose        print timing and the saved settings
+          --version        print the version
 
 ## Code Layout
 
