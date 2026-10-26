@@ -94,7 +94,7 @@ limits:
   Original image <a href="https://commons.wikimedia.org/wiki/File:Bublegum-cheste.jpg">Bublegum-cheste.jpg</a>
   by <a href="https://commons.wikimedia.org/wiki/User:Anitadr6">Anitadr6</a>,
   licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0">CC BY-SA 4.0</a>.
-  Converted with EGAtool.
+  Cropped, converted with EGAtool.
 </sub>
 
 Program provides many parameters for adjusting the process. Different types of
