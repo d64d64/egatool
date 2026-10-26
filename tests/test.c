@@ -207,6 +207,53 @@ static void test_dither_modes(void)
     egt_image_free(&src);
 }
 
+/* Extremes (pure white and black, saturated primaries) with every palette
+ * and mode: only palette colours come out. A cache once mistook pure
+ * white for an empty slot and drew garbage. */
+static void test_extremes(void)
+{
+    EgtImage src = egt_image_alloc(16, 16);
+    static const int cols[][3] = { { 255, 255, 255 }, { 0, 0, 0 }, { 255, 0, 0 }, { 0, 255, 0 },
+                                   { 0, 0, 255 }, { 255, 255, 0 }, { 0, 255, 255 }, { 255, 0, 255 } };
+    int x, y, p, d;
+    for (y = 0; y < 16; y++)
+        for (x = 0; x < 16; x++) {
+            const int *c = cols[(x / 4 + y / 4 * 4) % 8];
+            set_px(&src, x, y, c[0], c[1], c[2]);
+        }
+    for (p = 0; p < EGT_PAL_COUNT; p++) {
+        EgtPalette pal;
+        egt_builtin_palette((EgtBuiltinPalette)p, &pal);
+        for (d = 0; d < EGT_DITHER_COUNT; d++) {
+            EgtConvertOptions o = options((EgtDither)d);
+            EgtImage out;
+            char name[96];
+            snprintf(name, sizeof name, "extremes, %s, %s", egt_builtin_palette_name((EgtBuiltinPalette)p),
+                     egt_dither_name((EgtDither)d));
+            current = name;
+            out = convert(&src, &pal, &o);
+            if (out.pixels) {
+                /* Pure white (the top-left block) stays light: nothing
+                 * under 40% of the palette's brightest colour. */
+                int i, top = 0, dark = 0;
+                for (i = 0; i < pal.count; i++) {
+                    int l = 299 * pal.colors[i].r + 587 * pal.colors[i].g + 114 * pal.colors[i].b;
+                    top = l > top ? l : top;
+                }
+                for (y = 0; y < 4; y++)
+                    for (x = 0; x < 4; x++) {
+                        const uint8_t *q = px(&out, x, y);
+                        dark += (299 * q[0] + 587 * q[1] + 114 * q[2]) * 10 < top * 4;
+                    }
+                CHECK(all_in_palette(&out, &pal), "colours outside the palette");
+                CHECK(!dark, "%d dark pixels in pure white", dark);
+            }
+            egt_image_free(&out);
+        }
+    }
+    egt_image_free(&src);
+}
+
 /* A colour halfway between two palette colours becomes an even mix. */
 static void test_midpoint_mix(void)
 {
@@ -746,6 +793,7 @@ int main(int argc, char **argv)
     }
     test_palettes();
     test_dither_modes();
+    test_extremes();
     test_midpoint_mix();
     test_limits();
     test_nes_pool();
