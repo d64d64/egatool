@@ -42,7 +42,7 @@ HEADERS    = $(wildcard src/*.h)
 L = build/linux
 W = build/win
 
-.PHONY: linux win all-targets clean
+.PHONY: linux win all-targets test clean
 
 linux: $(L)/egatool $(L)/egatool-cli
 win: $(W)/egatool.exe $(W)/egatool-cli.exe
@@ -74,8 +74,20 @@ $(W)/%.o: src/%.c $(HEADERS) | $(W)
 $(W)/icon.o: src/egatool.rc src/egatool.ico | $(W)
 	$(WIN_WINDRES) src/egatool.rc -O coff -o $@
 
-$(L) $(W):
+# --- Tests: engine and CLI built with sanitizers, then run ---
+T = build/test
+SAN = -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+test: $(T)/test $(T)/egatool-cli
+	$(T)/test $(T)/egatool-cli
+$(T)/test: tests/test.c $(addprefix $(T)/,$(ENGINE_OBJ)) | $(T)
+	$(LINUX_CC) $(CFLAGS_BASE) $(CFLAGS_WARN) $(SAN) $^ -o $@ -lm
+$(T)/egatool-cli: $(addprefix $(T)/,$(CLI_OBJ))
+	$(LINUX_CC) $(SAN) $^ -o $@ -lm
+$(T)/%.o: src/%.c $(HEADERS) | $(T)
+	$(LINUX_CC) $(CFLAGS_BASE) $(CFLAGS_WARN) $(SAN) -c $< -o $@
+
+$(L) $(W) $(T):
 	mkdir -p $@
 
 clean:
-	rm -rf $(L) $(W)
+	rm -rf $(L) $(W) $(T)
