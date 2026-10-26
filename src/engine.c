@@ -920,9 +920,42 @@ static int dither_amount(const EgtPalette *pal, const uint8_t *s, int snap, int 
     return (int)((d - snap) * 256 / snap);
 }
 
-/* Ordered: a 4x4 Bayer threshold, scaled to the spacing of the palette's
- * colours, is added to each pixel before the nearest colour is picked.
- * Near a palette colour (Snap) the threshold fades out. */
+/* Ordered dithering by Thomas Knoll's pattern method: for each pixel a
+ * plan of 16 palette colours is built whose average approaches the pixel
+ * (each step picks the colour nearest to the pixel plus the error so far),
+ * the plan is sorted by brightness, and the 4x4 Bayer matrix picks one
+ * entry. Works for any palette, including colours told apart by hue alone
+ * (purple from red and blue). Near a palette colour (Snap) it fades out. */
+static int luma(EgtColor c)
+{
+    return 299 * c.r + 587 * c.g + 114 * c.b;
+}
+
+/* The sorted plan for one colour (amount: how much dithering, 0..256). */
+static void ordered_plan(const EgtPalette *pal, const uint8_t *s, int amount, uint8_t *plan)
+{
+    int i, j, er = 0, eg = 0, eb = 0;
+    for (i = 0; i < 16; i++) {
+        int c = nearest(pal, clamp8(s[0] + er * amount / 256), clamp8(s[1] + eg * amount / 256),
+                        clamp8(s[2] + eb * amount / 256));
+        plan[i] = (uint8_t)c;
+        er += s[0] - pal->colors[c].r;
+        eg += s[1] - pal->colors[c].g;
+        eb += s[2] - pal->colors[c].b;
+    }
+    /* Insertion sort by brightness (16 entries). */
+    for (i = 1; i < 16; i++) {
+        uint8_t c = plan[i];
+        int l = luma(pal->colors[c]);
+        for (j = i; j > 0 && luma(pal->colors[plan[j - 1]]) > l; j--)
+            plan[j] = plan[j - 1];
+        plan[j] = c;
+    }
+}
+
+/* Plans are cached by colour: pictures repeat colours a lot. */
+#define PLAN_CACHE 65536
+
 static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
 {
     static const int BAYER4[4][4] = {
@@ -931,20 +964,38 @@ static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette
         { 3, 11,  1,  9},
         {15,  7, 13,  5},
     };
-    /* Roughly the distance between neighbouring palette colours. */
-    int spread = (int)(255.0 / cbrt((double)pal->count));
+    uint32_t *keys = malloc(PLAN_CACHE * sizeof *keys);
+    uint8_t (*plans)[16] = malloc(PLAN_CACHE * sizeof *plans);
     int x, y, k;
+    if (keys)
+        for (k = 0; k < PLAN_CACHE; k++)
+            keys[k] = 0xffffffffu; /* empty: amount is at most 256 */
     for (y = 0; y < src->height; y++) {
         for (x = 0; x < src->width; x++) {
             size_t o = ((size_t)y * src->width + x) * 4;
             const uint8_t *s = src->pixels + o;
             int amount = dither_amount(pal, s, snap, &k);
-            int t = (BAYER4[y & 3][x & 3] * 2 - 15) * spread / 32 * amount / 256;
-            if (amount > 0)
-                k = nearest(pal, clamp8(s[0] + t), clamp8(s[1] + t), clamp8(s[2] + t));
+            if (amount > 0) {
+                uint8_t own[16], *plan = own;
+                if (keys && plans) {
+                    uint32_t key = (uint32_t)s[0] << 16 | (uint32_t)s[1] << 8 | s[2];
+                    uint32_t h = (key * 2654435761u) >> 16;
+                    key |= (uint32_t)(amount - 1) << 24; /* amount 1..256 fits in 8 bits */
+                    plan = plans[h];
+                    if (keys[h] != key) {
+                        ordered_plan(pal, s, amount, plan);
+                        keys[h] = key;
+                    }
+                } else {
+                    ordered_plan(pal, s, amount, plan);
+                }
+                k = plan[BAYER4[y & 3][x & 3]];
+            }
             put(dst->pixels + o, pal->colors[k]);
         }
     }
+    free(keys);
+    free(plans);
 }
 
 /* Error diffusion with a rolling buffer of 3 error rows, padded by 2 pixels
