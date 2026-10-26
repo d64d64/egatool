@@ -90,13 +90,32 @@ static bool has_ext(const char *path, const char *ext)
     return true;
 }
 
+static void write_to_file(void *ctx, void *data, int size)
+{
+    fwrite(data, 1, (size_t)size, (FILE *)ctx);
+}
+
+/* stb's own file writers don't report write errors (a full disk), so the
+ * data goes through our file, checked when it is closed. */
 bool egt_save_image(const char *path, const EgtImage *img)
 {
+    FILE *f = stbiw__fopen(path, "wb");
+    int w = img->width, h = img->height;
+    bool ok;
+    if (!f)
+        return false;
     if (has_ext(path, ".bmp"))
-        return stbi_write_bmp(path, img->width, img->height, 4, img->pixels) != 0;
-    if (has_ext(path, ".tga"))
-        return stbi_write_tga(path, img->width, img->height, 4, img->pixels) != 0;
-    return stbi_write_png(path, img->width, img->height, 4, img->pixels, img->width * 4) != 0;
+        ok = stbi_write_bmp_to_func(write_to_file, f, w, h, 4, img->pixels) != 0;
+    else if (has_ext(path, ".tga"))
+        ok = stbi_write_tga_to_func(write_to_file, f, w, h, 4, img->pixels) != 0;
+    else
+        ok = stbi_write_png_to_func(write_to_file, f, w, h, 4, img->pixels, w * 4) != 0;
+    ok = fflush(f) == 0 && !ferror(f) && ok;
+    if (fclose(f) != 0)
+        ok = false;
+    if (!ok)
+        remove(path);
+    return ok;
 }
 
 /* Appends one PNG text chunk at *pos (tEXt for ASCII, else iTXt, which is
@@ -171,6 +190,8 @@ bool egt_save_image_comment(const char *path, const EgtImage *img, const char *c
     ok = f && fwrite(out, 1, total, f) == total;
     if (f && fclose(f) != 0)
         ok = false;
+    if (f && !ok)
+        remove(path);
     free(out);
     return ok;
 }
