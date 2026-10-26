@@ -171,7 +171,9 @@ Palette used can be chosen from the dropdown list.
 ### Dither modes
 
 - **Ordered** – a fixed 4×4 Bayer pattern. Even, regular cross-hatching that
-  stays put when the picture changes.
+  stays put when the picture changes. Each pixel's colour is matched with a
+  mix of palette colours (Knoll's pattern dithering), so it works with any
+  palette.
 - **Burkes** – error diffusion over two rows. Smooth and fairly clean, with
   less noise than the larger kernels. Often the most pleasant on photos.
 - **Floyd-Steinberg** – the classic error diffusion, spreading each pixel's
@@ -411,6 +413,7 @@ Everything else is vendored in `external/`.
     make              # build/linux/egatool, build/linux/egatool-cli
     make win          # build/win/egatool.exe, build/win/egatool-cli.exe (MinGW cross build)
     make all-targets  # both
+    make test         # engine and command line tests (Linux, with sanitizers)
 
 On Linux, raylib is found with `pkg-config`, or else in `/usr/local`.
 Elsewhere, pass the paths:
