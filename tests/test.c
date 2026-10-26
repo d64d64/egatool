@@ -415,6 +415,50 @@ static void test_limits(void)
     egt_image_free(&src);
 }
 
+/* NES: a large area must get its colours even when the top of the picture
+ * already has many different areas (the palette pool once filled up from
+ * the top). */
+static void test_nes_pool(void)
+{
+    EgtPalette pal;
+    EgtImage src = egt_image_alloc(256, 240), out;
+    EgtConvertOptions o = options(EGT_DITHER_NONE);
+    int x, y, cx, cy, i, hits = 0, total = 0;
+    current = "NES palette pool";
+    egt_builtin_palette(EGT_PAL_NES, &pal);
+    rng_state = 99;
+    /* Top half: every 16x16 area a different mix of three colours. */
+    for (cy = 0; cy < 8; cy++)
+        for (cx = 0; cx < 16; cx++) {
+            int c[3];
+            for (i = 0; i < 3; i++)
+                c[i] = 1 + (int)(rnd() % 20);
+            for (y = 0; y < 16; y++)
+                for (x = 0; x < 16; x++) {
+                    const EgtColor *k = &pal.colors[c[(x / 4 + y / 4) % 3]];
+                    set_px(&src, cx * 16 + x, cy * 16 + y, k->r, k->g, k->b);
+                }
+        }
+    /* Bottom half: one colour not used above. */
+    for (y = 128; y < 240; y++)
+        for (x = 0; x < 256; x++) {
+            const EgtColor *k = &pal.colors[40];
+            set_px(&src, x, y, k->r, k->g, k->b);
+        }
+    o.limit = EGT_LIMIT_NES;
+    out = convert(&src, &pal, &o);
+    CHECK(out.pixels != NULL, "conversion failed");
+    if (out.pixels) {
+        for (y = 128; y < 240; y++)
+            for (x = 0; x < 256; x++, total++)
+                hits += pal_index(&pal, px(&out, x, y)) == 40;
+        CHECK(hits > total * 9 / 10, "the bottom area kept its colour in only %d%% of pixels",
+              hits * 100 / total);
+    }
+    egt_image_free(&src);
+    egt_image_free(&out);
+}
+
 /* ---- resize and adjustments ---------------------------------------------- */
 
 static void mean_rgb(const EgtImage *img, double *m)
@@ -700,6 +744,7 @@ int main(int argc, char **argv)
     test_dither_modes();
     test_midpoint_mix();
     test_limits();
+    test_nes_pool();
     test_resize();
     test_adjust();
     test_files();

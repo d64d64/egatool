@@ -533,22 +533,37 @@ static int choose_subpalettes(const Ctx *c, int bg, CSet *pals, bool *ok)
     Option scratch[MAX_OPT];
     int ncells = c->cw * c->ch, npool = 0, np = 0, i, j, round, cell;
     CSet pool[NES_POOL];
-    int pool_count[NES_POOL];
     float *cost = NULL, *cur = NULL;
-    int *assign = NULL, *member = NULL;
+    int *assign = NULL, *member = NULL, *fav_count = NULL, nfav = 0;
+    CSet *favs = NULL;
 
-    /* Each area's own favourite, counted. */
+    /* Each area's own favourite, counted; the pool gets the most common
+     * ones (all areas counted, so the top of the picture isn't favoured). */
+    favs = malloc((size_t)ncells * sizeof *favs);
+    fav_count = malloc((size_t)ncells * sizeof *fav_count);
+    if (!favs || !fav_count) {
+        *ok = false;
+        goto done;
+    }
     for (cell = 0; cell < ncells; cell++) {
         int n = cell_options(c, cell, bg, MAX_CAND, quick_sub(c), scratch);
         CSet *fav = &scratch[best_option(scratch, n)].set;
-        for (j = 0; j < npool && !set_equal(&pool[j], fav); j++)
+        for (j = 0; j < nfav && !set_equal(&favs[j], fav); j++)
             ;
-        if (j < npool) {
-            pool_count[j]++;
-        } else if (npool < NES_POOL) {
-            pool[npool] = *fav;
-            pool_count[npool++] = 1;
+        if (j < nfav) {
+            fav_count[j]++;
+        } else {
+            favs[nfav] = *fav;
+            fav_count[nfav++] = 1;
         }
+    }
+    while (npool < NES_POOL && npool < nfav) {
+        int top = -1;
+        for (j = 0; j < nfav; j++) /* earliest of equal counts wins */
+            if (fav_count[j] > 0 && (top < 0 || fav_count[j] > fav_count[top]))
+                top = j;
+        pool[npool++] = favs[top];
+        fav_count[top] = 0;
     }
     cost = malloc((size_t)ncells * npool * sizeof *cost);
     cur = malloc((size_t)ncells * sizeof *cur);
@@ -626,6 +641,8 @@ done:
     free(cur);
     free(assign);
     free(member);
+    free(favs);
+    free(fav_count);
     return np;
 }
 
