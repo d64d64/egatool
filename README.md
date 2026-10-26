@@ -109,7 +109,9 @@ combinations.
 Source image can be loaded as a command line parameter, by pasting from clipboard,
 by dragging a file on the window, or using the *Open...* button. 
 
-On Linux clipboard works with `wl-clipboard` (Wayland) or `xclip` (X11) installed.
+On Linux clipboard works with `wl-clipboard` (Wayland) or `xclip` (X11) installed,
+and the Open and Save dialogs need `zenity` or `kdialog` (otherwise they appear
+as text in the terminal).
 
 Source image is shown in left viewport, resulting image on right. By default, source
 is in *prepared* display mode, with rescaling and effects applied before dithering
@@ -418,6 +420,10 @@ For Windows, point `RAYLIB_WIN` at an unpacked raylib MinGW release
 (the folder containing `include/` and `lib/`):
 
     make win RAYLIB_WIN=~/raylib-6.0_win64_mingw-w64
+
+On Windows, the easiest way is the same cross build in WSL: install the
+MinGW compiler there (`sudo apt install gcc-mingw-w64-x86-64` on Debian or
+Ubuntu) and run `make win`.
 
 The Windows executables are statically linked and need no DLLs.
 The command-line tool doesn't use raylib.
