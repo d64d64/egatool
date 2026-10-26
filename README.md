@@ -48,7 +48,8 @@ The image can be rendered with classic checkerboard process, in EGA colours:
   Background removed, converted with EGAtool.
 </sub>
 
-(Saved with 2x pixel size to better see the detail.)
+Saved with 2x pixel size to better see the detail. On phone screen you may need
+to zoom in to see the dithering.
 
 Or with ordered dithering in CGA colours, using solid colour detection:
 
@@ -87,9 +88,9 @@ Image produced with palette, resolution and limits of ZX Spectrum:
 
 Limits and palettes can be mixed and used with resolutions not available on
 original hardware. As an example, high-resolution conversion using C64 colouring
-limits:
+limits, but the DawnBringer 32 palette:
 
-<img src="img/bubblegum_c64.png" alt="Bublegum C64" width="403"/><br>
+<img src="img/bublegum_c64_db_469.png" alt="Bublegum C64 limits, DB32 palette" width="469"/><br>
 <sub>
   Original image <a href="https://commons.wikimedia.org/wiki/File:Bublegum-cheste.jpg">Bublegum-cheste.jpg</a>
   by <a href="https://commons.wikimedia.org/wiki/User:Anitadr6">Anitadr6</a>,
