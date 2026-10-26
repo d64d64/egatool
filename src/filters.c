@@ -39,6 +39,8 @@ static void box_taps_free(BoxTaps *t)
     free(t->first);
     free(t->count);
     free(t->weight);
+    t->first = t->count = NULL;
+    t->weight = NULL;
 }
 
 /* For each output position along one axis: the source pixels it covers
