@@ -22,6 +22,7 @@
 #include "engine.h"
 #include "icon_data.h"
 #include "imageio.h"
+#include "pipeline.h"
 #include "recipe.h"
 #include "thread.h"
 #include "topaz_font.h"
@@ -101,18 +102,8 @@ typedef struct {
 typedef struct {
     SourceRef *src;
     unsigned src_id;
-    int w, h;
-    bool nearest;
-    int smooth, smooth_threshold;
-    float smooth_radius;
-    EgtAdjust adj;
-    int outline, outline_mode, outline_min;
-    float outline_dark;
+    EgtSettings set; /* normalised */
     EgtPalette pal;
-    int dither, prefer_solid, harsh_mix, light_mix, min_region, snap;
-    bool calibrate;
-    int calibrate_max; /* 0 = any change */
-    int limit, consistency;
     /* For the settings saved with the image only. */
     char pal_arg[256], src_name[256];
 } Job;
@@ -127,22 +118,12 @@ typedef struct {
     /* Guarded by sync. */
     bool quit, running, has_job, has_result;
     Job job;
-    EgtImage res_prepared, res_output;
-    bool res_valid;
-    int res_dither;
-    Job res_job; /* the settings res_output was made with */
-    EgtCalibAnchor res_cal[EGT_CALIBRATE_MAX];
-    int res_ncal;
+    EgtResult res;
+    EgtRunStatus res_status;
+    Job res_job; /* the settings res was made with */
     double res_ms;
-    /* Worker thread only: caches of the slower steps. */
-    EgtImage base;
-    Job base_key;
-    uint8_t *mask;
-    unsigned mask_src;
-    int mask_w, mask_h, mask_sens;
-    EgtImage detail;
-    unsigned detail_src;
-    int detail_w, detail_h;
+    /* Worker thread only: intermediate results kept between runs. */
+    EgtCache cache;
 } Worker;
 
 typedef struct {
@@ -419,88 +400,6 @@ static const EgtPalette *current_palette(App *app, EgtPalette *tmp)
 
 /* ---- background conversion ----------------------------------------------- */
 
-/* Runs one job; fills prepared and output (output valid unless the palette
- * doesn't suit the dither). Uses and updates the worker's caches. */
-static bool run_job(Worker *wk, const Job *job, EgtImage *prepared, EgtImage *output,
-                    EgtCalibAnchor *cal, int *ncal)
-{
-    const EgtImage *source = &job->src->img;
-    EgtFilters filt = {0};
-    EgtConvertOptions opt = {0};
-
-    /* Resize and smooth: only when those inputs changed. */
-    if (!wk->base.pixels || wk->base_key.src_id != job->src_id || wk->base_key.w != job->w ||
-        wk->base_key.h != job->h || wk->base_key.nearest != job->nearest ||
-        wk->base_key.smooth != job->smooth || wk->base_key.smooth_radius != job->smooth_radius ||
-        wk->base_key.smooth_threshold != job->smooth_threshold) {
-        EgtFilters sf = {0};
-        egt_image_free(&wk->base);
-        sf.smooth = (EgtSmooth)job->smooth;
-        sf.smooth_radius = job->smooth_radius;
-        sf.smooth_threshold = job->smooth_threshold;
-        wk->base = egt_resize_smoothed(source, job->w, job->h, job->nearest, &sf);
-        wk->base_key = *job;
-        if (!wk->base.pixels)
-            return false;
-    }
-
-    *prepared = egt_image_copy(&wk->base);
-    *output = egt_image_alloc(job->w, job->h);
-    if (!prepared->pixels || !output->pixels)
-        return false;
-    egt_adjust(prepared, &job->adj);
-    *ncal = 0;
-    if (job->calibrate) {
-        *ncal = egt_calibrate(prepared, &job->pal, job->calibrate_max, cal);
-        if (*ncal < 0) {
-            *ncal = 0;
-            return false;
-        }
-    }
-
-    filt.smooth = EGT_SMOOTH_NONE; /* already applied when resizing */
-    filt.smooth_radius = 1;
-    filt.outline = job->outline;
-    filt.outline_darkness = job->outline_dark;
-    filt.outline_mode = (EgtOutlineMode)job->outline_mode;
-    filt.outline_min_length = job->outline_min;
-    if (filt.outline_mode == EGT_OUTLINE_HIRES && filt.outline > 0) {
-        if (!wk->mask || wk->mask_src != job->src_id || wk->mask_w != job->w ||
-            wk->mask_h != job->h || wk->mask_sens != filt.outline) {
-            free(wk->mask);
-            wk->mask = egt_outline_mask_hires(source, job->w, job->h, filt.outline);
-            wk->mask_src = job->src_id;
-            wk->mask_w = job->w;
-            wk->mask_h = job->h;
-            wk->mask_sens = filt.outline;
-        }
-        filt.outline_mask = wk->mask;
-    }
-    egt_filter(prepared, &filt);
-
-    opt.dither = (EgtDither)job->dither;
-    opt.prefer_solid = job->prefer_solid;
-    opt.harsh_mix = job->harsh_mix;
-    opt.light_mix = job->light_mix;
-    opt.min_region = job->min_region;
-    opt.snap = job->snap;
-    opt.limit = (EgtLimit)job->limit;
-    opt.consistency = job->consistency;
-    if (opt.dither == EGT_DITHER_EGA_CHECKER && opt.harsh_mix > 0) {
-        if (!wk->detail.pixels || wk->detail_src != job->src_id ||
-            wk->detail_w != job->w || wk->detail_h != job->h) {
-            egt_image_free(&wk->detail);
-            wk->detail = egt_detail_image(source, job->w, job->h);
-            wk->detail_src = job->src_id;
-            wk->detail_w = job->w;
-            wk->detail_h = job->h;
-        }
-        if (wk->detail.pixels)
-            opt.detail = &wk->detail;
-    }
-    return egt_convert(prepared, output, &job->pal, &opt);
-}
-
 /* Worker thread: waits for a job, converts it without holding the lock,
  * and leaves the result for the main loop (replacing one not yet taken). */
 static void worker_main(void *arg)
@@ -509,10 +408,8 @@ static void worker_main(void *arg)
     egt_sync_lock(wk->sync);
     for (;;) {
         Job job;
-        EgtImage prepared = {0}, output = {0};
-        EgtCalibAnchor cal[EGT_CALIBRATE_MAX];
-        int ncal = 0;
-        bool valid;
+        EgtResult res;
+        EgtRunStatus status;
         double t0;
         while (!wk->has_job && !wk->quit)
             egt_sync_wait(wk->sync);
@@ -524,19 +421,14 @@ static void worker_main(void *arg)
         egt_sync_unlock(wk->sync);
 
         t0 = GetTime();
-        valid = run_job(wk, &job, &prepared, &output, cal, &ncal);
+        status = egt_run(&job.src->img, job.src_id, &job.pal, &job.set, &wk->cache, &res);
 
         egt_sync_lock(wk->sync);
         /* Replace a result the app hasn't picked up yet. */
-        egt_image_free(&wk->res_prepared);
-        egt_image_free(&wk->res_output);
-        wk->res_prepared = prepared;
-        wk->res_output = output;
-        wk->res_valid = valid && prepared.pixels;
-        wk->res_dither = job.dither;
+        egt_result_free(&wk->res);
+        wk->res = res;
+        wk->res_status = status;
         wk->res_job = job;
-        memcpy(wk->res_cal, cal, sizeof cal);
-        wk->res_ncal = ncal;
         wk->res_ms = (GetTime() - t0) * 1000.0;
         wk->has_result = true;
         wk->running = false;
@@ -571,11 +463,8 @@ static void worker_stop(Worker *wk)
         egt_image_free(&wk->job.src->img);
         free(wk->job.src);
     }
-    egt_image_free(&wk->res_prepared);
-    egt_image_free(&wk->res_output);
-    egt_image_free(&wk->base);
-    egt_image_free(&wk->detail);
-    free(wk->mask);
+    egt_result_free(&wk->res);
+    egt_cache_free(&wk->cache);
     if (wk->sync)
         egt_sync_destroy(wk->sync);
 }
@@ -599,55 +488,44 @@ static void make_job(App *app, Job *job)
     memset(job, 0, sizeof *job);
     if (!app->src)
         return;
+    EgtSettings *s = &job->set;
     job->src = app->src;
     job->src_id = app->src->id;
-    job->w = RES_SIZES[app->res_index][0];
-    job->h = RES_SIZES[app->res_index][1];
+    s->width = RES_SIZES[app->res_index][0];
+    s->height = RES_SIZES[app->res_index][1];
     if (app->res_index == RES_ORIGINAL)
-        original_size(app, &job->w, &job->h);
-    job->nearest = !app->area_downscale;
-    job->smooth = app->smooth;
-    if (job->smooth != EGT_SMOOTH_NONE) {
-        job->smooth_radius = egt_snap_radius(app->smooth_radius);
-        job->smooth_threshold = (int)roundf(app->smooth_threshold);
-    }
+        original_size(app, &s->width, &s->height);
+    s->nearest = !app->area_downscale;
+    s->filt.smooth = (EgtSmooth)app->smooth;
+    s->filt.smooth_radius = app->smooth_radius;
+    s->filt.smooth_threshold = (int)roundf(app->smooth_threshold);
     /* As shown on the sliders (and written in saved settings). */
-    job->adj.brightness = (int)roundf(app->brightness);
-    job->adj.contrast = (int)roundf(app->contrast);
-    job->adj.saturation = roundf(app->saturation * 100) / 100;
-    job->outline = (int)roundf(app->outline);
-    if (job->outline > 0) {
-        job->outline_mode = app->outline_mode;
-        job->outline_min = (int)roundf(app->outline_min);
-        job->outline_dark = app->outline_dark;
-    }
+    s->adj.brightness = (int)roundf(app->brightness);
+    s->adj.contrast = (int)roundf(app->contrast);
+    s->adj.saturation = app->saturation;
+    s->filt.outline = (int)roundf(app->outline);
+    s->filt.outline_mode = (EgtOutlineMode)app->outline_mode;
+    s->filt.outline_min_length = (int)roundf(app->outline_min);
+    s->filt.outline_darkness = app->outline_dark;
+    s->opt.dither = (EgtDither)app->dither_index;
+    s->opt.prefer_solid = (int)roundf(app->prefer_solid);
+    s->opt.harsh_mix = (int)roundf(app->harsh_mix);
+    s->opt.light_mix = (int)roundf(app->light_mix);
+    s->opt.snap = (int)roundf(app->snap);
+    s->opt.min_region = (int)roundf(app->min_region);
+    s->opt.limit = (EgtLimit)app->limit_index;
+    s->opt.consistency = (int)roundf(app->consistency);
+    s->calibrate = app->calibrate;
+    if (roundf(app->calibrate_max) < CAL_ANY)
+        s->calibrate_max = (int)roundf(app->calibrate_max);
+    /* Clears what doesn't apply, so changing it doesn't reconvert. */
+    egt_settings_normalize(s);
     {
         /* Only the used entries: the rest of tmp is uninitialised, and
          * copying it made every frame look like a settings change. */
         const EgtPalette *pal = current_palette(app, &tmp);
         job->pal.count = pal->count;
         memcpy(job->pal.colors, pal->colors, (size_t)pal->count * sizeof pal->colors[0]);
-    }
-    job->dither = app->dither_index;
-    if (job->dither == EGT_DITHER_EGA_CHECKER) {
-        job->prefer_solid = (int)roundf(app->prefer_solid);
-        job->harsh_mix = (int)roundf(app->harsh_mix);
-        job->light_mix = (int)roundf(app->light_mix);
-    } else {
-        job->calibrate = app->calibrate;
-        if (job->calibrate && roundf(app->calibrate_max) < CAL_ANY)
-            job->calibrate_max = (int)roundf(app->calibrate_max);
-        if (job->dither != EGT_DITHER_NONE)
-            job->snap = (int)roundf(app->snap);
-    }
-    if (egt_dither_supports_cleanup((EgtDither)job->dither))
-        job->min_region = (int)roundf(app->min_region);
-    job->limit = app->limit_index;
-    if (job->limit != EGT_LIMIT_NONE) {
-        /* Not used with limits. */
-        job->harsh_mix = 0;
-        job->min_region = 0;
-        job->consistency = (int)roundf(app->consistency);
     }
     snprintf(job->pal_arg, sizeof job->pal_arg, "%s",
              app->pal_index == PAL_LOADED && app->have_loaded_pal ? app->loaded_pal_name
@@ -666,28 +544,8 @@ static char *output_recipe(const App *app, const char *out_path)
     r.source = j->src_name[0] && strcmp(j->src_name, "clipboard") ? j->src_name : NULL;
     r.output = out_path ? base_name(out_path) : NULL;
     r.palette = j->pal_arg;
-    r.width = j->w;
-    r.height = j->h;
-    r.nearest = j->nearest;
-    r.adj = j->adj;
-    r.filt.smooth = (EgtSmooth)j->smooth;
-    r.filt.smooth_radius = j->smooth_radius;
-    r.filt.smooth_threshold = j->smooth_threshold;
-    r.filt.outline = j->outline;
-    r.filt.outline_mode = (EgtOutlineMode)j->outline_mode;
-    r.filt.outline_min_length = j->outline_min;
-    r.filt.outline_darkness = j->outline_dark;
-    r.opt.dither = (EgtDither)j->dither;
-    r.opt.prefer_solid = j->prefer_solid;
-    r.opt.harsh_mix = j->harsh_mix;
-    r.opt.light_mix = j->light_mix;
-    r.opt.min_region = j->min_region;
-    r.opt.snap = j->snap;
-    r.opt.limit = (EgtLimit)j->limit;
-    r.opt.consistency = j->consistency;
+    r.set = j->set;
     r.scale = app->export_scale;
-    r.calibrate = j->calibrate;
-    r.calibrate_max = j->calibrate_max;
     return egt_recipe_string(&r);
 }
 
@@ -695,14 +553,11 @@ static char *output_recipe(const App *app, const char *out_path)
 static void pipeline_tick(App *app)
 {
     Worker *wk = app->worker;
-    Job job;
-    EgtImage prepared = {0}, output = {0};
-    bool got = false, valid = false, prepared_ok;
-    int dither = 0;
+    Job job, res_job;
+    EgtResult res;
+    EgtRunStatus status = EGT_RUN_OK;
+    bool got = false;
     double ms = 0;
-    Job res_job;
-    EgtCalibAnchor res_cal[EGT_CALIBRATE_MAX];
-    int res_ncal = 0;
 
     make_job(app, &job);
     egt_sync_lock(wk->sync);
@@ -718,16 +573,11 @@ static void pipeline_tick(App *app)
         egt_sync_signal(wk->sync);
     }
     if (wk->has_result) {
-        prepared = wk->res_prepared;
-        output = wk->res_output;
-        valid = wk->res_valid;
-        dither = wk->res_dither;
-        ms = wk->res_ms;
+        res = wk->res;
+        status = wk->res_status;
         res_job = wk->res_job;
-        memcpy(res_cal, wk->res_cal, sizeof res_cal);
-        res_ncal = wk->res_ncal;
-        wk->res_prepared = (EgtImage){0};
-        wk->res_output = (EgtImage){0};
+        ms = wk->res_ms;
+        memset(&wk->res, 0, sizeof wk->res);
         wk->has_result = false;
         got = true;
     }
@@ -741,38 +591,36 @@ static void pipeline_tick(App *app)
 
     if (!got)
         return;
-    prepared_ok = prepared.pixels != NULL;
     /* A result of an image that's since been replaced still shows until
      * the new one is ready: better than an empty view. */
-    if (prepared.pixels) {
-        if (prepared.width != app->img_w || prepared.height != app->img_h)
+    if (res.prepared.pixels) {
+        if (res.prepared.width != app->img_w || res.prepared.height != app->img_h)
             app->recenter = true; /* a new size keeps the zoom, re-centred */
-        app->img_w = prepared.width;
-        app->img_h = prepared.height;
-        upload(&app->in, &prepared);
-        memcpy(app->calib, res_cal, sizeof res_cal);
-        app->ncalib = res_ncal;
+        app->img_w = res.prepared.width;
+        app->img_h = res.prepared.height;
+        upload(&app->in, &res.prepared);
+        memcpy(app->calib, res.anchors, sizeof res.anchors);
+        app->ncalib = res.nanchors;
     }
-    egt_image_free(&prepared);
+    egt_image_free(&res.prepared);
     egt_image_free(&app->output);
-    app->output_valid = valid;
+    app->output_valid = status == EGT_RUN_OK;
     app->have_result = true;
     app->convert_ms = ms;
-    if (valid) {
-        upload(&app->out, &output);
-        app->output = output;
+    if (status == EGT_RUN_OK) {
+        upload(&app->out, &res.output);
+        app->output = res.output;
         app->output_job = res_job;
         if (app->status_is_convert_error)
             set_status(app, "");
     } else {
-        egt_image_free(&output);
-        if (!prepared_ok || res_job.limit != EGT_LIMIT_NONE) {
-            set_status(app, "Out of memory");
-        } else {
+        egt_image_free(&res.output);
+        if (status == EGT_RUN_PALETTE_TOO_BIG)
             set_status(app, TextFormat("%s dithering needs a palette of at most %d colours",
-                                       egt_dither_name((EgtDither)dither), EGT_CHECKER_MAX_COLORS));
-            app->status_is_convert_error = true;
-        }
+                                       egt_dither_name(res_job.set.opt.dither), EGT_CHECKER_MAX_COLORS));
+        else
+            set_status(app, TextFormat("Conversion failed: %s", egt_run_message(status)));
+        app->status_is_convert_error = true;
     }
 }
 
@@ -1218,7 +1066,7 @@ static void draw_panel(App *app)
             GuiDisable();
         GuiCheckBox((Rectangle){ col_x, y + 4, 20, 20 }, "Solid areas", &app->calibrate);
         GuiEnable();
-        if (app->calibrate && !checker && app->output_job.calibrate) {
+        if (app->calibrate && !checker && app->output_job.set.calibrate) {
             float sx = col_x + 152;
             int k;
             if (app->ncalib == 0)

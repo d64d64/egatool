@@ -6,20 +6,14 @@
 #ifndef EGATOOL_RECIPE_H
 #define EGATOOL_RECIPE_H
 
-#include "engine.h"
+#include "pipeline.h"
 
 typedef struct {
     const char *source;  /* input file name, or NULL (pasted image) */
     const char *output;  /* output file name, or NULL */
     const char *palette; /* CLI name (see egt_builtin_palette_arg) or a .pal file */
-    int width, height;   /* 0 = original size */
-    bool nearest;
-    EgtAdjust adj;
-    EgtFilters filt;     /* outline_mask is ignored */
-    EgtConvertOptions opt; /* detail is ignored */
-    int scale;
-    bool calibrate;      /* ignored for checker */
-    int calibrate_max;   /* calibrate: largest colour change, 0 = any */
+    EgtSettings set;     /* written normalised (egt_settings_normalize) */
+    int scale;           /* export enlargement, 1..8 */
 } EgtRecipe;
 
 /* Command-line name of a built-in palette ("ega", "cga-warm"...). */

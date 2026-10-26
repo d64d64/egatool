@@ -88,8 +88,11 @@ static void add_word(Str *s, const char *w)
 char *egt_recipe_string(const EgtRecipe *r)
 {
     Str s = { NULL, 0, 0, false };
-    const EgtConvertOptions *o = &r->opt;
-    const EgtFilters *f = &r->filt;
+    EgtSettings set = r->set;
+    const EgtConvertOptions *o = &set.opt;
+    const EgtFilters *f = &set.filt;
+    /* What egt_run processes, so replaying gives the same pixels. */
+    egt_settings_normalize(&set);
     s.cap = 256;
     s.buf = malloc(s.cap);
     if (!s.buf)
@@ -108,17 +111,15 @@ char *egt_recipe_string(const EgtRecipe *r)
         add(&s, " --snap %d", o->snap);
     if (o->limit > EGT_LIMIT_NONE && o->limit < EGT_LIMIT_COUNT)
         add(&s, " --limit %s --consistency %d", egt_limit_arg(o->limit), o->consistency);
-    if (r->width > 0 && r->height > 0)
-        add(&s, " -s %dx%d", r->width, r->height);
-    if (r->nearest)
+    add(&s, " -s %dx%d", set.width, set.height);
+    if (set.nearest)
         add(&s, " --nearest");
     add(&s, " --brightness %d --contrast %d --saturation %.2f",
-        r->adj.brightness, r->adj.contrast, (double)r->adj.saturation);
-    if (r->calibrate > 0 && o->dither != EGT_DITHER_EGA_CHECKER)
-    {
+        set.adj.brightness, set.adj.contrast, (double)set.adj.saturation);
+    if (set.calibrate) {
         add(&s, " --calibrate");
-        if (r->calibrate_max > 0)
-            add(&s, " --calibrate-max %d", r->calibrate_max);
+        if (set.calibrate_max > 0)
+            add(&s, " --calibrate-max %d", set.calibrate_max);
     }
     if (f->smooth != EGT_SMOOTH_NONE) {
         char name[16];
@@ -138,7 +139,7 @@ char *egt_recipe_string(const EgtRecipe *r)
         if (f->outline_min_length > 0)
             add(&s, " --outline-min %d", f->outline_min_length);
     }
-    if (o->min_region > 1 && egt_dither_supports_cleanup(o->dither) && o->limit == EGT_LIMIT_NONE)
+    if (o->min_region > 1)
         add(&s, " --min-region %d", o->min_region);
     if (r->scale > 1)
         add(&s, " -x %d", r->scale);

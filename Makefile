@@ -34,7 +34,7 @@ WIN_WINDRES  = x86_64-w64-mingw32-windres
 WIN_LIBS     = $(WIN_RAYLIB_LIBS) -lraylib -lopengl32 -lgdi32 -lwinmm \
                -lcomdlg32 -lole32 -static -static-libgcc -static-libstdc++
 
-ENGINE_OBJ = engine.o limits.o filters.o imageio.o recipe.o
+ENGINE_OBJ = engine.o limits.o filters.o imageio.o recipe.o pipeline.o
 GUI_OBJ    = $(ENGINE_OBJ) gui.o clipboard.o thread.o raygui_impl.o tinyfiledialogs.o
 CLI_OBJ    = $(ENGINE_OBJ) cli.o
 HEADERS    = $(wildcard src/*.h)

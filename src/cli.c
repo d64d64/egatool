@@ -4,6 +4,8 @@
  * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,8 +14,8 @@
 
 #include "engine.h"
 #include "imageio.h"
+#include "pipeline.h"
 #include "recipe.h"
-
 
 /* Case-insensitive compare (strcasecmp is POSIX, not standard C). */
 static int strcasecmp_ascii(const char *a, const char *b)
@@ -84,7 +86,7 @@ static void usage(void)
         "                       lightest 0.5%% become black and white\n"
         "      --brightness N   -128..127\n"
         "      --contrast N     -127..127 (below 0: softer, towards mid grey)\n"
-        "      --saturation F   -1..1\n"
+        "      --saturation F   -1..1.5\n"
         "      --smooth NAME    none, median, kuwahara or surface (default none)\n"
         "      --radius F       smoothing radius in target pixels, 0.25..4\n"
         "                       (quarter steps below 1, then half steps), default 1\n"
@@ -104,29 +106,84 @@ static void usage(void)
         "the settings used, as this command line, in a Comment text chunk.\n");
 }
 
+/* Strict number parsing: the whole word must be a number (no "5x", no
+ * "rubbish" read as 0), within lo..hi. */
+static bool parse_int(const char *opt, const char *text, long lo, long hi, int *out)
+{
+    char *end;
+    long v;
+    errno = 0;
+    v = strtol(text, &end, 10);
+    if (end == text || *end || errno || v < lo || v > hi) {
+        fprintf(stderr, "%s: '%s' is not a whole number in %ld..%ld\n", opt, text, lo, hi);
+        return false;
+    }
+    *out = (int)v;
+    return true;
+}
+
+static bool parse_float(const char *opt, const char *text, double lo, double hi, float *out)
+{
+    char *end;
+    double v;
+    errno = 0;
+    v = strtod(text, &end);
+    if (end == text || *end || errno || !isfinite(v) || v < lo || v > hi) {
+        fprintf(stderr, "%s: '%s' is not a number in %g..%g\n", opt, text, lo, hi);
+        return false;
+    }
+    *out = (float)v;
+    return true;
+}
+
+/* WxH or N% (1..100). */
+static bool parse_size(const char *text, int *w, int *h, int *pct)
+{
+    char *end;
+    long a, b;
+    errno = 0;
+    a = strtol(text, &end, 10);
+    if (end != text && !strcmp(end, "%") && !errno && a >= 1 && a <= 100) {
+        *pct = (int)a;
+        *w = *h = 0;
+        return true;
+    }
+    if (end != text && *end == 'x' && !errno && a >= 1 && a <= EGT_MAX_SIZE) {
+        const char *t = end + 1;
+        b = strtol(t, &end, 10);
+        if (end != t && !*end && !errno && b >= 1 && b <= EGT_MAX_SIZE) {
+            *w = (int)a;
+            *h = (int)b;
+            return true;
+        }
+    }
+    fprintf(stderr, "bad size '%s' (WxH up to %d each, or 1%%..100%%)\n", text, EGT_MAX_SIZE);
+    return false;
+}
+
 int main(int argc, char **argv)
 {
     const char *in_path = NULL, *out_path = NULL, *pal_arg = "ega";
-    EgtConvertOptions opt = { .dither = EGT_DITHER_EGA_CHECKER, .prefer_solid = EGT_PREFER_SOLID_DEFAULT,
-                              .harsh_mix = 10, .snap = 16,
-                              .consistency = 30 };
-    EgtAdjust adj = { 0, 0, 0.0f };
-    EgtFilters filt = { .smooth = EGT_SMOOTH_NONE, .smooth_radius = 1.0f,
-                        .smooth_threshold = 25,
-                        .outline_darkness = 1.0f, .outline_mode = EGT_OUTLINE_BASIC };
-    EgtImage source, detail = {0, 0, NULL};
-    uint8_t *mask = NULL;
-    int nearest_resize = 0, want_pct = 100;
-    bool auto_contrast = false, ok;
-    int calibrate = 0, calibrate_max = 0;
+    EgtSettings set;
+    EgtImage source;
+    EgtResult res;
+    EgtRunStatus status;
     EgtPalette pal;
-    EgtImage img, out;
-    int want_w = 0, want_h = 0, verbose = 0, scale = 1, i;
+    EgtImage out;
+    int want_pct = 100, want_w = 0, want_h = 0, verbose = 0, scale = 1, i, k;
+    bool auto_contrast = false, ok;
+    const char *problem;
     clock_t t0;
 
+    egt_settings_default(&set);
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *next = i + 1 < argc ? argv[i + 1] : NULL;
+        bool good = true;
+#define INT_OPT(name, field) \
+        else if (!strcmp(a, name) && next) { good = parse_int(a, next, INT_MIN, INT_MAX, &(field)); i++; }
+#define FLOAT_OPT(name, field) \
+        else if (!strcmp(a, name) && next) { good = parse_float(a, next, -1e9, 1e9, &(field)); i++; }
         if ((!strcmp(a, "-p") || !strcmp(a, "--palette")) && next) {
             pal_arg = next; i++;
         } else if ((!strcmp(a, "-d") || !strcmp(a, "--dither")) && next) {
@@ -137,39 +194,34 @@ int main(int argc, char **argv)
                 fprintf(stderr, "unknown dither '%s'\n", next);
                 return 2;
             }
-            opt.dither = (EgtDither)d; i++;
-        } else if (!strcmp(a, "--prefer-solid") && next) {
-            opt.prefer_solid = atoi(next); i++;
+            set.opt.dither = (EgtDither)d; i++;
         } else if ((!strcmp(a, "-b") || !strcmp(a, "--bias")) && next) {
             /* Settings saved by earlier versions: about the same look. */
-            opt.prefer_solid = (atoi(next) + 12) / 25; i++;
-        } else if (!strcmp(a, "--light-mix") && next) {
-            opt.light_mix = atoi(next); i++;
-        } else if (!strcmp(a, "--harsh-mix") && next) {
-            opt.harsh_mix = atoi(next); i++;
+            int b;
+            good = parse_int(a, next, 0, 2500, &b);
+            set.opt.prefer_solid = (b + 12) / 25; i++;
         } else if ((!strcmp(a, "-s") || !strcmp(a, "--size")) && next) {
-            char pc;
-            int pct;
-            if (sscanf(next, "%d%c", &pct, &pc) == 2 && pc == '%') {
-                want_pct = pct;
-                if (pct < 1 || pct > 100) {
-                    fprintf(stderr, "bad size '%s' (1%%..100%%)\n", next);
-                    return 2;
-                }
-                want_w = want_h = 0;
-            } else if (sscanf(next, "%dx%d", &want_w, &want_h) != 2 || want_w < 1 || want_h < 1) {
-                fprintf(stderr, "bad size '%s'\n", next);
-                return 2;
-            }
-            i++;
-        } else if (!strcmp(a, "--brightness") && next) {
-            adj.brightness = atoi(next); i++;
-        } else if (!strcmp(a, "--contrast") && next) {
-            adj.contrast = atoi(next); i++;
-        } else if (!strcmp(a, "--saturation") && next) {
-            adj.saturation = (float)atof(next); i++;
-        } else if (!strcmp(a, "--nearest")) {
-            nearest_resize = 1;
+            good = parse_size(next, &want_w, &want_h, &want_pct); i++;
+        } else if ((!strcmp(a, "-x") || !strcmp(a, "--scale")) && next) {
+            good = parse_int(a, next, 1, 8, &scale); i++;
+        }
+        INT_OPT("--prefer-solid", set.opt.prefer_solid)
+        INT_OPT("--light-mix", set.opt.light_mix)
+        INT_OPT("--harsh-mix", set.opt.harsh_mix)
+        INT_OPT("--snap", set.opt.snap)
+        INT_OPT("--consistency", set.opt.consistency)
+        INT_OPT("--min-region", set.opt.min_region)
+        INT_OPT("--brightness", set.adj.brightness)
+        INT_OPT("--contrast", set.adj.contrast)
+        FLOAT_OPT("--saturation", set.adj.saturation)
+        INT_OPT("--threshold", set.filt.smooth_threshold)
+        FLOAT_OPT("--radius", set.filt.smooth_radius)
+        INT_OPT("--outline", set.filt.outline)
+        INT_OPT("--outline-min", set.filt.outline_min_length)
+        FLOAT_OPT("--outline-dark", set.filt.outline_darkness)
+        INT_OPT("--calibrate-max", set.calibrate_max)
+        else if (!strcmp(a, "--nearest")) {
+            set.nearest = true;
         } else if (!strcmp(a, "--smooth") && next) {
             int m;
             for (m = 0; m < EGT_SMOOTH_COUNT && strcasecmp_ascii(next, egt_smooth_name((EgtSmooth)m)); m++)
@@ -178,33 +230,21 @@ int main(int argc, char **argv)
                 fprintf(stderr, "unknown smoothing '%s'\n", next);
                 return 2;
             }
-            filt.smooth = (EgtSmooth)m; i++;
-        } else if (!strcmp(a, "--threshold") && next) {
-            filt.smooth_threshold = atoi(next); i++;
-        } else if (!strcmp(a, "--radius") && next) {
-            filt.smooth_radius = (float)atof(next); i++;
-        } else if (!strcmp(a, "--outline") && next) {
-            filt.outline = atoi(next); i++;
+            set.filt.smooth = (EgtSmooth)m; i++;
         } else if (!strcmp(a, "--outline-mode") && next) {
             if (!strcmp(next, "basic"))
-                filt.outline_mode = EGT_OUTLINE_BASIC;
+                set.filt.outline_mode = EGT_OUTLINE_BASIC;
             else if (!strcmp(next, "hires"))
-                filt.outline_mode = EGT_OUTLINE_HIRES;
+                set.filt.outline_mode = EGT_OUTLINE_HIRES;
             else {
                 fprintf(stderr, "unknown outline mode '%s'\n", next);
                 return 2;
             }
             i++;
-        } else if (!strcmp(a, "--outline-min") && next) {
-            filt.outline_min_length = atoi(next); i++;
-        } else if (!strcmp(a, "--outline-dark") && next) {
-            filt.outline_darkness = (float)atof(next); i++;
         } else if (!strcmp(a, "--auto-contrast")) {
             auto_contrast = true;
         } else if (!strcmp(a, "--calibrate")) {
-            calibrate = 1;
-        } else if (!strcmp(a, "--calibrate-max") && next) {
-            calibrate_max = atoi(next); i++;
+            set.calibrate = true;
         } else if (!strcmp(a, "--limit") && next) {
             int l;
             for (l = 0; l < EGT_LIMIT_COUNT && strcmp(next, egt_limit_arg((EgtLimit)l)); l++)
@@ -213,19 +253,7 @@ int main(int argc, char **argv)
                 fprintf(stderr, "unknown limit '%s'\n", next);
                 return 2;
             }
-            opt.limit = (EgtLimit)l; i++;
-        } else if (!strcmp(a, "--consistency") && next) {
-            opt.consistency = atoi(next); i++;
-        } else if (!strcmp(a, "--snap") && next) {
-            opt.snap = atoi(next); i++;
-        } else if (!strcmp(a, "--min-region") && next) {
-            opt.min_region = atoi(next); i++;
-        } else if ((!strcmp(a, "-x") || !strcmp(a, "--scale")) && next) {
-            scale = atoi(next); i++;
-            if (scale < 1 || scale > 8) {
-                fprintf(stderr, "scale must be 1..8\n");
-                return 2;
-            }
+            set.opt.limit = (EgtLimit)l; i++;
         } else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) {
             verbose = 1;
         } else if (!strcmp(a, "--version")) {
@@ -246,125 +274,93 @@ int main(int argc, char **argv)
             usage();
             return 2;
         }
+        if (!good)
+            return 2;
+#undef INT_OPT
+#undef FLOAT_OPT
     }
     if (!in_path || !out_path) {
         usage();
         return 2;
     }
-
-    {
-        int k;
-        for (k = 0; k < EGT_PAL_COUNT && strcmp(pal_arg, egt_builtin_palette_arg((EgtBuiltinPalette)k)); k++)
-            ;
-        if (k < EGT_PAL_COUNT)
-            egt_builtin_palette((EgtBuiltinPalette)k, &pal);
-        else if (!egt_load_jasc_palette(pal_arg, &pal)) {
-            fprintf(stderr, "cannot load palette '%s' (expected JASC-PAL)\n", pal_arg);
-            return 1;
-        }
+    /* Ranges, checked before any work (the size is checked once known). */
+    set.width = set.height = 1;
+    if ((problem = egt_settings_check(&set)) != NULL) {
+        fprintf(stderr, "%s\n", problem);
+        return 2;
     }
 
-    img = egt_load_image(in_path);
-    if (!img.pixels) {
+    for (k = 0; k < EGT_PAL_COUNT && strcmp(pal_arg, egt_builtin_palette_arg((EgtBuiltinPalette)k)); k++)
+        ;
+    if (k < EGT_PAL_COUNT) {
+        egt_builtin_palette((EgtBuiltinPalette)k, &pal);
+    } else if (!egt_load_jasc_palette(pal_arg, &pal)) {
+        fprintf(stderr, "cannot load palette '%s' (expected JASC-PAL)\n", pal_arg);
+        return 1;
+    }
+
+    source = egt_load_image(in_path);
+    if (!source.pixels) {
         fprintf(stderr, "cannot load '%s': %s\n", in_path, egt_load_error());
         return 1;
     }
-    /* img becomes the target-size image; source keeps the original for
-     * hi-res outlines. */
-    source = img;
     if (!want_w) {
         /* The image's own size, or a percentage of it. */
         want_w = (int)lroundf(source.width * (want_pct / 100.0f));
         want_h = (int)lroundf(source.height * (want_pct / 100.0f));
-        if (want_w < 1)
-            want_w = 1;
-        if (want_h < 1)
-            want_h = 1;
+        want_w = want_w < 1 ? 1 : want_w;
+        want_h = want_h < 1 ? 1 : want_h;
     }
-    if (want_w != source.width || want_h != source.height || filt.smooth != EGT_SMOOTH_NONE)
-        img = egt_resize_smoothed(&source, want_w, want_h, nearest_resize, &filt);
-    if (!img.pixels) {
-        fprintf(stderr, "out of memory\n");
-        return 1;
+    set.width = want_w;
+    set.height = want_h;
+    if ((problem = egt_settings_check(&set)) != NULL) {
+        fprintf(stderr, "%s\n", problem);
+        egt_image_free(&source);
+        return 2;
+    }
+    if (auto_contrast) {
+        /* On the source, like the GUI's Auto button. */
+        egt_auto_levels(&source, &set.adj);
+        if (verbose)
+            fprintf(stderr, "auto contrast: brightness %d, contrast %d\n",
+                    set.adj.brightness, set.adj.contrast);
     }
 
     t0 = clock();
-    if (opt.dither == EGT_DITHER_EGA_CHECKER && opt.harsh_mix > 0 && opt.limit == EGT_LIMIT_NONE) {
-        detail = egt_detail_image(&source, img.width, img.height);
-        if (!detail.pixels) {
-            fprintf(stderr, "out of memory\n");
-            return 1;
-        }
-        opt.detail = &detail;
-    }
-    if (filt.outline > 0 && filt.outline_mode == EGT_OUTLINE_HIRES) {
-        mask = egt_outline_mask_hires(&source, img.width, img.height, filt.outline);
-        if (!mask) {
-            fprintf(stderr, "out of memory\n");
-            return 1;
-        }
-        filt.outline_mask = mask;
-    }
-    if (auto_contrast) {
-        egt_auto_levels(&img, &adj);
-        if (verbose)
-            fprintf(stderr, "auto contrast: brightness %d, contrast %d\n",
-                    adj.brightness, adj.contrast);
-    }
-    egt_adjust(&img, &adj);
-    if (calibrate > 0 && opt.dither != EGT_DITHER_EGA_CHECKER) {
-        EgtCalibAnchor anc[EGT_CALIBRATE_MAX];
-        int k, na = egt_calibrate(&img, &pal, calibrate_max, anc);
-        if (na < 0) {
-            fprintf(stderr, "out of memory\n");
-            return 1;
-        }
-        for (k = 0; verbose && k < na; k++)
-            fprintf(stderr, "calibrate: %.1f%% of the image, %d,%d,%d -> %d,%d,%d\n",
-                    anc[k].share * 100.0, anc[k].from.r, anc[k].from.g, anc[k].from.b,
-                    anc[k].to.r, anc[k].to.g, anc[k].to.b);
-    }
-    out = egt_image_alloc(img.width, img.height);
-    if (!out.pixels || !egt_filter(&img, &filt)) {
-        fprintf(stderr, "out of memory\n");
+    status = egt_run(&source, 1, &pal, &set, NULL, &res);
+    if (status != EGT_RUN_OK) {
+        fprintf(stderr, "conversion failed: %s\n", egt_run_message(status));
+        egt_result_free(&res);
+        egt_image_free(&source);
         return 1;
     }
-    if (!egt_convert(&img, &out, &pal, &opt)) {
-        fprintf(stderr, "conversion failed (checker mode supports at most %d colours)\n",
-                EGT_CHECKER_MAX_COLORS);
-        return 1;
-    }
+    for (k = 0; verbose && k < res.nanchors; k++)
+        fprintf(stderr, "calibrate: %.1f%% of the image, %d,%d,%d -> %d,%d,%d\n",
+                res.anchors[k].share * 100.0, res.anchors[k].from.r, res.anchors[k].from.g,
+                res.anchors[k].from.b, res.anchors[k].to.r, res.anchors[k].to.g, res.anchors[k].to.b);
     if (verbose)
-        fprintf(stderr, "%dx%d, %s, %d colours%s%s: %.1f ms\n", img.width, img.height,
-                egt_dither_name(opt.dither), pal.count,
-                opt.limit ? ", " : "", opt.limit ? egt_limit_name(opt.limit) : "",
+        fprintf(stderr, "%dx%d, %s, %d colours%s%s: %.1f ms\n", set.width, set.height,
+                egt_dither_name(set.opt.dither), pal.count,
+                set.opt.limit ? ", " : "", set.opt.limit ? egt_limit_name(set.opt.limit) : "",
                 (double)(clock() - t0) * 1000.0 / CLOCKS_PER_SEC);
 
+    out = res.output;
     if (scale > 1) {
-        EgtImage big = egt_resize_nearest(&out, out.width * scale, out.height * scale);
-        if (!big.pixels) {
+        out = egt_resize_nearest(&res.output, res.output.width * scale, res.output.height * scale);
+        if (!out.pixels) {
             fprintf(stderr, "out of memory\n");
             return 1;
         }
-        egt_image_free(&out);
-        out = big;
     }
     {
-        EgtRecipe r = { 0 };
+        EgtRecipe r;
         char *comment;
+        memset(&r, 0, sizeof r);
         r.source = base_name(in_path);
         r.output = base_name(out_path);
         r.palette = pal_arg;
-        r.width = want_w;
-        r.height = want_h;
-        r.nearest = nearest_resize != 0;
-        r.adj = adj; /* after --auto-contrast: the values it picked */
-        r.filt = filt;
-        r.filt.smooth_radius = egt_snap_radius(filt.smooth_radius);
-        r.opt = opt;
+        r.set = set; /* after --auto-contrast: the values it picked */
         r.scale = scale;
-        r.calibrate = calibrate != 0;
-        r.calibrate_max = calibrate_max;
         comment = egt_recipe_string(&r);
         ok = egt_save_image_comment(out_path, &out, comment);
         if (verbose && comment)
@@ -375,11 +371,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "cannot write '%s'\n", out_path);
         return 1;
     }
-    if (img.pixels != source.pixels)
-        egt_image_free(&source);
-    egt_image_free(&img);
-    egt_image_free(&out);
-    free(mask);
-    egt_image_free(&detail);
+    if (out.pixels != res.output.pixels)
+        egt_image_free(&out);
+    egt_result_free(&res);
+    egt_image_free(&source);
     return 0;
 }

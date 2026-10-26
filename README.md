@@ -351,7 +351,7 @@ adjustments, i.e. what the converter actually sees.
                            same colours, 0..300 (default 30)
           --brightness N   -128..127
           --contrast N     -127..127 (below 0: softer, towards mid grey)
-          --saturation F   -1..1
+          --saturation F   -1..1.5
           --smooth NAME    none, median, kuwahara or surface
           --radius F       smoothing radius in output pixels, 0.25..4 (default 1)
           --threshold N    surface smoothing threshold, 1..100 (default 25)

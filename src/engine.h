@@ -111,7 +111,7 @@ typedef struct {
      * checker mode's harsh_mix and min_region don't apply, and its
      * palette size limit doesn't either (pairs come from the cell). */
     EgtLimit limit;
-    /* 0..100: how strongly neighbouring cells keep the same colours, so
+    /* 0..300: how strongly neighbouring cells keep the same colours, so
      * flat areas and gradients don't show block seams. */
     int consistency;
 } EgtConvertOptions;
