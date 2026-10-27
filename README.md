@@ -138,8 +138,8 @@ are available for saving images or copying to clipboard.
 Saved PNGs record the settings that made them, as a `egatool-cli`
 command line in a `Comment` text chunk, e.g.
 
-    egatool-cli -p ega -d sierra --snap 16 -s 640x350 --brightness 0 \
-      --contrast 0 --saturation 0.00 -x 2 photo.jpg photo_ega_2x.png
+    egatool-cli -p ega -d sierra -s 640x350 --snap 24 --contrast 10 -x 2 \
+      photo.jpg photo_ega_2x.png
 
 Running it on the original image recreates the PNG exactly. To read PNG comment,
 use `exiftool image.png`, `identify -verbose image.png` (ImageMagick), GIMP's
@@ -328,8 +328,7 @@ adjustments, i.e. what the converter actually sees.
                     apple2|gameboy|nes|db32|pico8|FILE.pal
       -d, --dither  checker|ordered|ordered2|burkes|floyd|sierra|stucki|none
           --prefer-solid N checker: how much closer a checkerboard must come
-                           than the nearest solid colour, 0..100 (default 16;
-                           -b N from earlier versions is read as N / 25)
+                           than the nearest solid colour, 0..100 (default 16)
           --light-mix N    checker: judge checkerboards by pixel values (0,
                            default) or emitted light (100), or in between
           --harsh-mix N    checker: calm harsh colour pairs in areas up to a
