@@ -1097,6 +1097,37 @@ static const Kernel KERNEL_STUCKI = { 42, 12, {
     {-2, 1, 2}, {-1, 1, 4}, {0, 1, 8}, {1, 1, 4}, {2, 1, 2},
     {-2, 2, 1}, {-1, 2, 2}, {0, 2, 4}, {1, 2, 2}, {2, 2, 1} } };
 
+/* The point nearest to (r, g, b) on the lines between the palette's
+ * colours: what dithering with them can show of it. */
+static void reachable(const EgtPalette *pal, int r, int g, int b, int *q)
+{
+    float best = 1e30f;
+    int i, j;
+    q[0] = pal->colors[0].r;
+    q[1] = pal->colors[0].g;
+    q[2] = pal->colors[0].b;
+    for (i = 0; i < pal->count; i++)
+        for (j = i + 1; j < pal->count; j++) {
+            const EgtColor *a = &pal->colors[i], *c = &pal->colors[j];
+            float ab[3] = { (float)(c->r - a->r), (float)(c->g - a->g), (float)(c->b - a->b) };
+            float av[3] = { (float)(r - a->r), (float)(g - a->g), (float)(b - a->b) };
+            float len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+            float t = len2 > 0 ? (av[0] * ab[0] + av[1] * ab[1] + av[2] * ab[2]) / len2 : 0;
+            float d0, d1, d2, d;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            d0 = av[0] - t * ab[0];
+            d1 = av[1] - t * ab[1];
+            d2 = av[2] - t * ab[2];
+            d = d0 * d0 + d1 * d1 + d2 * d2;
+            if (d < best) {
+                best = d;
+                q[0] = (int)lroundf(a->r + t * ab[0]);
+                q[1] = (int)lroundf(a->g + t * ab[1]);
+                q[2] = (int)lroundf(a->b + t * ab[2]);
+            }
+        }
+}
+
 /* Error diffusion with a rolling buffer of 3 error rows, padded by 2 pixels
  * on each side so taps never need bounds checks. Error stays out of cells
  * with another palette: there it would pile up along the cell edge. */
@@ -1130,6 +1161,16 @@ static bool convert_diffuse(const EgtImage *src, EgtImage *dst, const EgtPalMap 
             g = clamp8(s[1] + e[1] / k->divisor * amount / 256);
             b = clamp8(s[2] + e[2] / k->divisor * amount / 256);
             c = pal->colors[nearest(pal, r, g, b)];
+            if (map->npals > 1) {
+                /* A colour limit's few colours: pass on only the error they
+                 * can work off, or the rest piles up (no "add green" in a
+                 * cell without green) and flattens the cell. */
+                int q[3];
+                reachable(pal, r, g, b, q);
+                r = q[0];
+                g = q[1];
+                b = q[2];
+            }
             er = (r - c.r) * amount / 256;
             eg = (g - c.g) * amount / 256;
             eb = (b - c.b) * amount / 256;
@@ -1521,6 +1562,11 @@ bool egt__dither(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
      * different palettes. */
     if (map->npals > 1)
         o.min_region = 0;
+    /* With a colour limit's 2-4 colours per cell, Ordered's lighter/darker
+     * shifts often can't reach the other colour (solid blocks): mix the
+     * cell's colours instead. */
+    if (map->npals > 1 && o.dither == EGT_DITHER_ORDERED)
+        o.dither = EGT_DITHER_ORDERED2;
     switch (o.dither) {
     case EGT_DITHER_NONE:            return convert_none(src, dst, map, o.min_region);
     case EGT_DITHER_ORDERED:         convert_ordered(src, dst, map, o.snap); return true;
