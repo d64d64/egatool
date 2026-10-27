@@ -562,6 +562,12 @@ uint8_t *egt_outline_mask_hires(const EgtImage *source, int width, int height,
     return mask;
 }
 
+/* Channel c of pixel (x, y) in a packed RGB image w pixels wide. */
+static int at(const uint8_t *rgb, int w, int x, int y, int c)
+{
+    return rgb[((size_t)y * w + x) * 3 + c];
+}
+
 /* Canny edge detection on source: blur, gradient, thinning to one-pixel
  * ridges, and hysteresis (weak edges kept only where they continue
  * strong ones). The edges are then reduced to a width x height mask. */
@@ -597,10 +603,11 @@ static uint8_t *outline_mask_canny(const EgtImage *source, int width, int height
             int xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : x;
             int ym = y > 0 ? y - 1 : 0, yp = y < h - 1 ? y + 1 : y;
             int best = 0, bgx = 0, bgy = 0;
-#define B(xx, yy) blur[((size_t)(yy) * w + (xx)) * 3 + c]
             for (c = 0; c < 3; c++) {
-                int gx = (B(xp, ym) + 2 * B(xp, y) + B(xp, yp)) - (B(xm, ym) + 2 * B(xm, y) + B(xm, yp));
-                int gy = (B(xm, yp) + 2 * B(x, yp) + B(xp, yp)) - (B(xm, ym) + 2 * B(x, ym) + B(xp, ym));
+                int gx = (at(blur, w, xp, ym, c) + 2 * at(blur, w, xp, y, c) + at(blur, w, xp, yp, c))
+                       - (at(blur, w, xm, ym, c) + 2 * at(blur, w, xm, y, c) + at(blur, w, xm, yp, c));
+                int gy = (at(blur, w, xm, yp, c) + 2 * at(blur, w, x, yp, c) + at(blur, w, xp, yp, c))
+                       - (at(blur, w, xm, ym, c) + 2 * at(blur, w, x, ym, c) + at(blur, w, xp, ym, c));
                 int m = gx * gx + gy * gy;
                 if (m > best) {
                     best = m;
@@ -608,7 +615,6 @@ static uint8_t *outline_mask_canny(const EgtImage *source, int width, int height
                     bgy = gy;
                 }
             }
-#undef B
             i = (size_t)y * w + x;
             mag[i] = (float)(sqrt((double)best) / gain);
             {

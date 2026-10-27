@@ -314,21 +314,12 @@ static void paste_image(App *app)
     set_source(app, img, "clipboard");
 }
 
-/* The output enlarged by the export scale (pixel-exact copies), or the
- * output itself at 1x. Free with export_free(). NULL pixels on failure. */
+/* A new copy of the output, enlarged by the export scale (pixel-exact).
+ * Free with egt_image_free(). NULL pixels on failure. */
 static EgtImage export_image(const App *app)
 {
     int k = app->export_scale > 1 ? app->export_scale : 1;
-    if (k == 1)
-        return app->output;
     return egt_resize_nearest(&app->output, app->output.width * k, app->output.height * k);
-}
-
-/* Frees an image from export_image(), unless it is the output itself. */
-static void export_free(const App *app, EgtImage *img)
-{
-    if (img->pixels != app->output.pixels)
-        egt_image_free(img);
 }
 
 static char *output_recipe(const App *app, const char *out_path);
@@ -367,7 +358,7 @@ static void save_output_dialog(App *app)
         set_status(app, TextFormat("Saved %s (%dx%d)", base_name(path), img.width, img.height));
     else
         set_status(app, TextFormat("Cannot write %s", base_name(path)));
-    export_free(app, &img);
+    egt_image_free(&img);
 }
 
 static void copy_output(App *app)
@@ -384,7 +375,7 @@ static void copy_output(App *app)
         set_status(app, TextFormat("Copied to clipboard (%dx%d)", img.width, img.height));
     else
         set_status(app, "Copy failed (Linux needs wl-copy or xclip)");
-    export_free(app, &img);
+    egt_image_free(&img);
 }
 
 /* The palette chosen in the panel: the loaded .pal file, or a built-in

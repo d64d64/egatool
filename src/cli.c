@@ -161,6 +161,22 @@ static bool parse_size(const char *text, int *w, int *h, int *pct)
     return false;
 }
 
+/* A command-line option that sets one number: an int or a float field. */
+typedef struct {
+    const char *name;
+    int *i;
+    float *f;
+} NumOpt;
+
+static const NumOpt *find_num_opt(const NumOpt *opts, size_t n, const char *name)
+{
+    size_t k;
+    for (k = 0; k < n; k++)
+        if (!strcmp(opts[k].name, name))
+            return &opts[k];
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     const char *in_path = NULL, *out_path = NULL, *pal_arg = "ega";
@@ -175,16 +191,37 @@ int main(int argc, char **argv)
     const char *problem;
     clock_t t0;
 
+    /* Options that just set a number. */
+    const NumOpt nums[] = {
+        { "--prefer-solid", &set.opt.prefer_solid, NULL },
+        { "--light-mix", &set.opt.light_mix, NULL },
+        { "--harsh-mix", &set.opt.harsh_mix, NULL },
+        { "--snap", &set.opt.snap, NULL },
+        { "--consistency", &set.opt.consistency, NULL },
+        { "--min-region", &set.opt.min_region, NULL },
+        { "--brightness", &set.adj.brightness, NULL },
+        { "--contrast", &set.adj.contrast, NULL },
+        { "--saturation", NULL, &set.adj.saturation },
+        { "--threshold", &set.filt.smooth_threshold, NULL },
+        { "--radius", NULL, &set.filt.smooth_radius },
+        { "--outline", &set.filt.outline, NULL },
+        { "--outline-min", &set.filt.outline_min_length, NULL },
+        { "--outline-dark", NULL, &set.filt.outline_darkness },
+        { "--calibrate-max", &set.calibrate_max, NULL },
+    };
+
     egt_settings_default(&set);
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *next = i + 1 < argc ? argv[i + 1] : NULL;
         bool good = true;
-#define INT_OPT(name, field) \
-        else if (!strcmp(a, name) && next) { good = parse_int(a, next, INT_MIN, INT_MAX, &(field)); i++; }
-#define FLOAT_OPT(name, field) \
-        else if (!strcmp(a, name) && next) { good = parse_float(a, next, -1e9, 1e9, &(field)); i++; }
-        if ((!strcmp(a, "-p") || !strcmp(a, "--palette")) && next) {
+        const NumOpt *num = find_num_opt(nums, sizeof nums / sizeof *nums, a);
+        if (num && next) {
+            /* Ranges are checked together afterwards (egt_settings_check). */
+            good = num->i ? parse_int(a, next, INT_MIN, INT_MAX, num->i)
+                          : parse_float(a, next, -1e9, 1e9, num->f);
+            i++;
+        } else if ((!strcmp(a, "-p") || !strcmp(a, "--palette")) && next) {
             pal_arg = next; i++;
         } else if ((!strcmp(a, "-d") || !strcmp(a, "--dither")) && next) {
             int d;
@@ -204,23 +241,7 @@ int main(int argc, char **argv)
             good = parse_size(next, &want_w, &want_h, &want_pct); i++;
         } else if ((!strcmp(a, "-x") || !strcmp(a, "--scale")) && next) {
             good = parse_int(a, next, 1, 8, &scale); i++;
-        }
-        INT_OPT("--prefer-solid", set.opt.prefer_solid)
-        INT_OPT("--light-mix", set.opt.light_mix)
-        INT_OPT("--harsh-mix", set.opt.harsh_mix)
-        INT_OPT("--snap", set.opt.snap)
-        INT_OPT("--consistency", set.opt.consistency)
-        INT_OPT("--min-region", set.opt.min_region)
-        INT_OPT("--brightness", set.adj.brightness)
-        INT_OPT("--contrast", set.adj.contrast)
-        FLOAT_OPT("--saturation", set.adj.saturation)
-        INT_OPT("--threshold", set.filt.smooth_threshold)
-        FLOAT_OPT("--radius", set.filt.smooth_radius)
-        INT_OPT("--outline", set.filt.outline)
-        INT_OPT("--outline-min", set.filt.outline_min_length)
-        FLOAT_OPT("--outline-dark", set.filt.outline_darkness)
-        INT_OPT("--calibrate-max", set.calibrate_max)
-        else if (!strcmp(a, "--nearest")) {
+        } else if (!strcmp(a, "--nearest")) {
             set.nearest = true;
         } else if (!strcmp(a, "--smooth") && next) {
             int m;
@@ -276,8 +297,6 @@ int main(int argc, char **argv)
         }
         if (!good)
             return 2;
-#undef INT_OPT
-#undef FLOAT_OPT
     }
     if (!in_path || !out_path) {
         usage();
