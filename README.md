@@ -171,11 +171,13 @@ Palette used can be chosen from the dropdown list.
 ### Dither modes
 
 - **Ordered** – a fixed 4×4 Bayer pattern. Even, regular cross-hatching that
-  stays put when the picture changes.
+  stays put when the picture changes. Moves colours only lighter or darker,
+  so some muted colours between palette colours (olive greens with EGA) can turn 
+  grey.
 - **Ordered 2-colour** – the same pattern, but each colour is drawn as a mix
-  of the two palette colours that match it best. Calmer, and truer to colours
-  that lie between palette colours of different hue (a sky between light blue
-  and cyan), where Ordered can give a busy pattern or a flat wrong colour.
+  of the two best matching palette colours. Calmer, and truer to colours
+  that lie between palette colours of different hue, at the cost of softer 
+  shadows where they share the hue of what they shade.
 - **Burkes** – error diffusion over two rows. Smooth and fairly clean, with
   less noise than the larger kernels. Often the most pleasant on photos.
 - **Floyd-Steinberg** – the classic error diffusion, spreading each pixel's
