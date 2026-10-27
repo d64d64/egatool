@@ -4,8 +4,8 @@
 
 /* Shown in the .exe's Properties > Details. */
 1 VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION 1,1,0,0
+PRODUCTVERSION 1,1,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,9 +14,9 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "FileDescription", "EGAtool image converter"
-            VALUE "FileVersion", "1.0"
+            VALUE "FileVersion", "1.1"
             VALUE "ProductName", "EGAtool"
-            VALUE "ProductVersion", "1.0"
+            VALUE "ProductVersion", "1.1"
             VALUE "LegalCopyright", "Copyright (c) 2026 d64d64, zlib licence"
             VALUE "OriginalFilename", "egatool.exe"
         END

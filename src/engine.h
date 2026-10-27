@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define EGT_VERSION "1.0"
+#define EGT_VERSION "1.1"
 
 #define EGT_MAX_COLORS 256
 
