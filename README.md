@@ -374,15 +374,21 @@ adjustments, i.e. what the converter actually sees.
 ## Code Layout
 
 - `src/engine.[ch]` – palettes, adjustments, resizing and dithering on RGBA
-  buffers; no dependencies
+  buffers; no dependencies (`engine_int.h`: shared with `limits.c`)
 - `src/limits.c` – hardware colour limits (per-cell colour rules)
 - `src/filters.c` – area resize, smoothing and outline pre-processing
+- `src/pipeline.[ch]` – the whole conversion as one step, shared by GUI and
+  CLI: settings, their checks and defaults, and the run with its errors
 - `src/imageio.[ch]` – load/save via stb_image
 - `src/clipboard.[ch]` – Win32 clipboard, or wl-clipboard/xclip on Linux
 - `src/recipe.[ch]` – the settings as a CLI command line, saved in PNGs
 - `src/gui.c` – raylib/raygui front end, converting on a worker thread
+  (`raygui_impl.c`: raygui compiled on its own)
 - `src/thread.[ch]` – pthreads or Win32 threads for the worker
 - `src/cli.c` – command line front end
+- `src/egatool.rc`, `egatool.ico`, `icon_data.h` – program icon and Windows
+  version info; `topaz_font.h` – the embedded GUI font
+- `tests/test.c` – engine and command line tests (`make test`)
 
 ## License
 
