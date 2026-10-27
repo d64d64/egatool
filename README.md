@@ -171,13 +171,10 @@ Palette used can be chosen from the dropdown list.
 ### Dither modes
 
 - **Ordered** – a fixed 4×4 Bayer pattern. Even, regular cross-hatching that
-  stays put when the picture changes. Moves colours only lighter or darker,
-  so some muted colours between palette colours (olive greens with EGA) can turn 
-  grey.
-- **Ordered 2-colour** – the same pattern, but each colour is drawn as a mix
-  of the two best matching palette colours. Calmer, and truer to colours
-  that lie between palette colours of different hue, at the cost of softer 
-  shadows where they share the hue of what they shade.
+  stays put when the picture changes. Strong shading, but muted colours can
+  turn grey.
+- **Ordered 2-colour** – the same pattern, mixing the two best matching
+  palette colours. Calmer and truer in hue, with softer shadows.
 - **Burkes** – error diffusion over two rows. Smooth and fairly clean, with
   less noise than the larger kernels. Often the most pleasant on photos.
 - **Floyd-Steinberg** – the classic error diffusion, spreading each pixel's
@@ -289,8 +286,7 @@ Colours are chosen with following process:
   neighbours don't use, and may take a neighbour's colours outright, so
   flat areas and gradients don't break into blocks. 0 fits each cell
   alone; above 100, large areas share colours at the cost of some hue.
-- **Drawing** dithers each pixel with its own cell's colours only. Ordered
-  then mixes the cell's colours as Ordered 2-colour does.
+- **Drawing** dithers each pixel with its own cell's colours only.
 
 With a limit chosen, *Calm harsh mixes* and *Clean up* don't apply, and
 Checkerboard mode works with palettes of any size (the pairs come from each
@@ -308,9 +304,8 @@ adjustments, i.e. what the converter actually sees.
   flattens areas into solid patches while keeping edges sharp; *Surface*
   (like Photoshop's Surface Blur) averages each pixel only with nearby
   pixels of similar colour, so noise and shading within a surface are
-  smoothed while thin lines and small details of a different colour keep
-  their colour and width. *Surface threshold* is the colour difference
-  (in levels) still treated as the same surface: 
+  smoothed while details stay. *Surface threshold* is the colour difference 
+  still treated as the same surface.
 - **Outlines** – darkens pixels along strong edges.
   The setting is the colour contrast an edge needs: 1 only takes near
   black/white boundaries, 100 takes almost any. Two modes:
@@ -382,8 +377,7 @@ adjustments, i.e. what the converter actually sees.
   CLI: settings, their checks and defaults, and the run with its errors
 - `src/imageio.[ch]` – load/save via stb_image
 - `src/clipboard.[ch]` – Win32 clipboard, or wl-clipboard/xclip on Linux
-- `src/recipe.[ch]` – the command line language: reads the options, and
-  writes settings back as a command line (saved in PNGs)
+- `src/recipe.[ch]` – the settings as a CLI command line, saved in PNGs
 - `src/gui.c` – raylib/raygui front end, converting on a worker thread
   (`raygui_impl.c`: raygui compiled on its own)
 - `src/thread.[ch]` – pthreads or Win32 threads for the worker
