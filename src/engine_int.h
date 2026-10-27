@@ -7,43 +7,26 @@
 
 #include "engine.h"
 
+/* Which colours each pixel may use: the image is split into cells of
+ * cell_w x cell_h pixels, and the cell at (cx, cy) uses palette
+ * pals[cell[cy * across + cx]]. Without a colour limit, one cell covers
+ * the whole image. */
 typedef struct {
-    int dx, dy, w;
-} KernelTap;
+    const EgtPalette *pals;
+    int npals;
+    const int *cell;
+    int cell_w, cell_h, across;
+} EgtPalMap;
 
-typedef struct {
-    int divisor;
-    int ntaps;
-    KernelTap taps[12];
-} Kernel;
+/* Dithers src into dst (same size; may be the same image) with opt's
+ * dither mode, each pixel with the palette map gives it (engine.c).
+ * Returns false on allocation failure or a palette too big for the mode. */
+bool egt__dither(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
+                 const EgtConvertOptions *opt);
 
-static const Kernel KERNEL_FLOYD = { 16, 4, {
-    {1, 0, 7}, {-1, 1, 3}, {0, 1, 5}, {1, 1, 1} } };
-static const Kernel KERNEL_BURKES = { 32, 7, {
-    {1, 0, 8}, {2, 0, 4},
-    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 8}, {1, 1, 4}, {2, 1, 2} } };
-static const Kernel KERNEL_SIERRA = { 32, 10, {
-    {1, 0, 5}, {2, 0, 3},
-    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 5}, {1, 1, 4}, {2, 1, 2},
-    {-1, 2, 2}, {0, 2, 3}, {1, 2, 2} } };
-static const Kernel KERNEL_STUCKI = { 42, 12, {
-    {1, 0, 8}, {2, 0, 4},
-    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 8}, {1, 1, 4}, {2, 1, 2},
-    {-2, 2, 1}, {-1, 2, 2}, {0, 2, 4}, {1, 2, 2}, {2, 2, 1} } };
-
-/* Hardware colour limits (limits.c): converts with opt->limit's per-cell
- * colour rules. Returns false on allocation failure. */
-/* Checkerboard: each step of "Prefer solid" (0..100) lets the nearest
- * solid colour be this much further from the source (RGB distance) than
- * the best two-colour mix and still be used. */
-#define PREFER_SOLID_STEP 0.25f
-
-/* Whether to keep the solid colour instead of a checkerboard mix, given
- * their RGB distances from the source. */
-bool egt__keep_solid(float solid_dist, float mix_dist, int prefer_solid);
-
-/* Conversion with a hardware colour limit (limits.c), for egt_convert(). */
+/* Conversion with a hardware colour limit (limits.c), for egt_convert():
+ * chooses each cell's colours, then draws with egt__dither. */
 bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
-                          const EgtConvertOptions *opt, const Kernel *kernel);
+                          const EgtConvertOptions *opt);
 
 #endif

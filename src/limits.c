@@ -18,9 +18,8 @@
  * 3. Consistency: a cell pays for colours its neighbours don't have, and
  *    may take a neighbour's set outright, so sweeps over the image settle
  *    on matching sets across flat areas and gradients.
- * 4. Drawing: each pixel is dithered with its own cell's colours only, and
- *    error diffusion passes on only the error those colours can work off
- *    (no "add red" piling up in a cell that has no red).
+ * 4. Drawing: each cell's colours become a small palette, and the chosen
+ *    dither mode draws with them (egt__dither in engine.c).
  *
  * Copyright (c) 2026 d64d64. zlib licence, see LICENSE.
  */
@@ -647,187 +646,37 @@ done:
 
 /* ---- drawing -------------------------------------------------------------- */
 
-static int nearest_in(const Ctx *c, const CSet *s, const float *v, float *d_out)
-{
-    int i, best = s->c[0];
-    float bd = 1e30f;
-    for (i = 0; i < s->n; i++) {
-        float d = dist2(v, c->prgb[s->c[i]]);
-        if (d < bd) {
-            bd = d;
-            best = s->c[i];
-        }
-    }
-    if (d_out)
-        *d_out = bd;
-    return best;
-}
-
-/* The segment between two of the set's colours that comes closest to v
- * (in RGB): its ends, where v falls along it (0..1) and that point. */
-static void best_segment(const Ctx *c, const CSet *s, const float *v, int *a, int *b, float *t,
-                         float *q)
+/* Colours in ascending order, so equal sets look the same. */
+static void sort_set(CSet *s)
 {
     int i, j;
-    float bd = 1e30f;
-    *a = *b = s->c[0];
-    *t = 0;
-    memcpy(q, c->prgb[s->c[0]], 3 * sizeof(float));
-    for (i = 0; i < s->n; i++)
-        for (j = i + 1; j < s->n; j++) {
-            const float *pa = c->prgb[s->c[i]], *pb = c->prgb[s->c[j]];
-            float ab[3] = { pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2] };
-            float len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-            float tt = len2 > 0 ? ((v[0] - pa[0]) * ab[0] + (v[1] - pa[1]) * ab[1] +
-                                   (v[2] - pa[2]) * ab[2]) / len2 : 0;
-            float p[3], d;
-            tt = tt < 0 ? 0 : tt > 1 ? 1 : tt;
-            p[0] = pa[0] + tt * ab[0];
-            p[1] = pa[1] + tt * ab[1];
-            p[2] = pa[2] + tt * ab[2];
-            d = dist2(v, p);
-            if (d < bd) {
-                bd = d;
-                *a = s->c[i];
-                *b = s->c[j];
-                *t = tt;
-                memcpy(q, p, sizeof p);
-            }
+    for (i = 1; i < s->n; i++)
+        for (j = i; j > 0 && s->c[j - 1] > s->c[j]; j--) {
+            uint8_t t = s->c[j];
+            s->c[j] = s->c[j - 1];
+            s->c[j - 1] = t;
         }
 }
 
-/* Snap, as in the unlimited modes: 0 = solid (within snap levels of one of
- * the cell's colours), 1 = full dithering (from twice that). */
-static float snap_amount(float d2, int snap)
+/* A sorted set as one number. */
+static uint64_t set_key(const CSet *s)
 {
-    float d;
-    if (snap <= 0)
-        return 1;
-    d = sqrtf(d2);
-    if (d <= snap)
-        return 0;
-    if (d >= 2.0f * snap)
-        return 1;
-    return (d - snap) / snap;
+    uint64_t key = s->n;
+    int i;
+    for (i = 0; i < MAX_SET; i++)
+        key = key << 8 | (i < s->n ? s->c[i] : 0);
+    return key;
 }
 
-/* Power mean of two levels: g = 1 averages the values; higher g leans
- * towards the brighter one, as averaging emitted light does. */
-static float gamma_mix_f(float a, float b, double g)
-{
-    double m = (pow(a / 255.0, g) + pow(b / 255.0, g)) / 2;
-    return (float)(255.0 * pow(m, 1.0 / g));
-}
+typedef struct {
+    uint64_t key;
+    int cell;
+} CellKey;
 
-/* Draws the result: each pixel dithered with its own cell's colours only.
- * Error diffusion skips neighbours in cells with a different set, so no
- * seams form along cell edges. */
-static void draw(const Ctx *c, const CSet *sets, const EgtConvertOptions *opt,
-                 const Kernel *kernel, uint8_t *out, float *err)
+static int compare_keys(const void *a, const void *b)
 {
-    static const int BAYER4[4][4] = {
-        { 0,  8,  2, 10},
-        {12,  4, 14,  6},
-        { 3, 11,  1,  9},
-        {15,  7, 13,  5},
-    };
-    int w = c->lw, h = c->lh, x, y, t;
-    size_t stride = (size_t)(w + 4) * 3;
-    double gamma = 1.0;
-    if (opt->light_mix > 0) {
-        double lm = (opt->light_mix > 100 ? 100 : opt->light_mix) / 100.0;
-        gamma = 1.0 + 1.2 * lm * lm;
-    }
-    for (y = 0; y < h; y++) {
-        float *row = err ? err + (size_t)(y % 3) * stride : NULL;
-        for (x = 0; x < w; x++) {
-            size_t i = (size_t)y * w + x;
-            const float *s = c->rgb + i * 3;
-            const CSet *set = &sets[(y / c->def->cell_h) * c->cw + x / c->def->cell_w];
-            float d2, amount;
-            int k = nearest_in(c, set, s, &d2);
-
-            if (opt->dither == EGT_DITHER_NONE || set->n == 1) {
-                out[i] = (uint8_t)k;
-            } else if (opt->dither == EGT_DITHER_EGA_CHECKER) {
-                int a, b, best_a = k, best_b = k;
-                float best_d = 1e30f;
-                for (a = 0; a < set->n; a++)
-                    for (b = a + 1; b < set->n; b++) {
-                        const float *pa = c->prgb[set->c[a]], *pb = c->prgb[set->c[b]];
-                        float m[3], d;
-                        if (gamma != 1.0) {
-                            m[0] = gamma_mix_f(pa[0], pb[0], gamma);
-                            m[1] = gamma_mix_f(pa[1], pb[1], gamma);
-                            m[2] = gamma_mix_f(pa[2], pb[2], gamma);
-                        } else {
-                            m[0] = (pa[0] + pb[0]) / 2;
-                            m[1] = (pa[1] + pb[1]) / 2;
-                            m[2] = (pa[2] + pb[2]) / 2;
-                        }
-                        d = dist2(s, m);
-                        if (d < best_d) {
-                            best_d = d;
-                            best_a = set->c[a];
-                            best_b = set->c[b];
-                        }
-                    }
-                out[i] = (uint8_t)((best_a == k && best_b == k) ||
-                                   egt__keep_solid(sqrtf(d2), sqrtf(best_d),
-                                                   opt->prefer_solid)
-                                   ? k : ((x ^ y) & 1) ? best_b : best_a);
-            } else if (!kernel) { /* ordered */
-                int a, b;
-                float tt, q[3], thr = (BAYER4[y & 3][x & 3] + 0.5f) / 16.0f;
-                amount = snap_amount(d2, opt->snap);
-                if (amount <= 0) {
-                    out[i] = (uint8_t)k;
-                } else {
-                    best_segment(c, set, s, &a, &b, &tt, q);
-                    tt = tt < 0.5f ? tt * amount : 1 - (1 - tt) * amount;
-                    out[i] = (uint8_t)(tt > thr ? b : a);
-                }
-            } else { /* error diffusion */
-                float *e = row + (size_t)(x + 2) * 3, v[3], q[3], tt;
-                int a, b, ci;
-                amount = snap_amount(d2, opt->snap);
-                if (amount <= 0) {
-                    out[i] = (uint8_t)k; /* solid; arriving error is dropped */
-                    continue;
-                }
-                for (t = 0; t < 3; t++) {
-                    v[t] = s[t] + e[t] / kernel->divisor * amount;
-                    v[t] = v[t] < 0 ? 0 : v[t] > 255 ? 255 : v[t];
-                }
-                ci = nearest_in(c, set, v, NULL);
-                out[i] = (uint8_t)ci;
-                /* Only the part of v the cell's colours can reach carries on. */
-                best_segment(c, set, v, &a, &b, &tt, q);
-                {
-                    float er = (q[0] - c->prgb[ci][0]) * amount;
-                    float eg = (q[1] - c->prgb[ci][1]) * amount;
-                    float eb = (q[2] - c->prgb[ci][2]) * amount;
-                    for (t = 0; t < kernel->ntaps; t++) {
-                        const KernelTap *tap = &kernel->taps[t];
-                        int tx = x + tap->dx, ty = y + tap->dy;
-                        float *te;
-                        /* Error stays out of cells with other colours: there
-                         * it would pile up along the cell edge as a line. */
-                        if (tx >= 0 && tx < w && ty < h &&
-                            !set_equal(set, &sets[(ty / c->def->cell_h) * c->cw +
-                                                  tx / c->def->cell_w]))
-                            continue;
-                        te = err + (size_t)(ty % 3) * stride + (size_t)(tx + 2) * 3;
-                        te[0] += er * tap->w;
-                        te[1] += eg * tap->w;
-                        te[2] += eb * tap->w;
-                    }
-                }
-            }
-        }
-        if (row)
-            memset(row, 0, stride * sizeof(float));
-    }
+    const CellKey *x = a, *y = b;
+    return x->key < y->key ? -1 : x->key > y->key ? 1 : x->cell - y->cell;
 }
 
 /* ---- setup ---------------------------------------------------------------- */
@@ -864,7 +713,7 @@ static bool classify_bright(Ctx *c, const EgtPalette *pal)
 /* Converts with a hardware limit: global choices, per-cell sets, sweeps
  * for consistency, then drawing (see the comment at the top). */
 bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
-                          const EgtConvertOptions *opt, const Kernel *kernel)
+                          const EgtConvertOptions *opt)
 {
     Ctx c;
     const LimitDef *def = limit_def(opt->limit);
@@ -873,8 +722,10 @@ bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *
     Option *opts = NULL;
     int *nopts = NULL;
     CSet *sets = NULL;
-    uint8_t *out = NULL;
-    float *err = NULL;
+    EgtPalette *pals = NULL;
+    int *cell_pal = NULL, npals = 0;
+    CellKey *keys = NULL;
+    EgtImage machine = { 0, 0, NULL };
     bool ok = false;
 
     memset(&c, 0, sizeof c);
@@ -926,11 +777,11 @@ bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *
     opts = malloc((size_t)ncells * MAX_OPT * sizeof *opts);
     nopts = malloc((size_t)ncells * sizeof *nopts);
     sets = malloc((size_t)ncells * sizeof *sets);
-    out = malloc(npix);
-    if (kernel)
-        err = calloc((size_t)(c.lw + 4) * 3 * 3, sizeof(float));
-    if (!c.rgb || !c.lab || !c.near1 || !c.near2 || !c.darker || !c.lighter || !opts || !nopts || !sets || !out ||
-        (kernel && !err))
+    cell_pal = malloc((size_t)ncells * sizeof *cell_pal);
+    keys = malloc((size_t)ncells * sizeof *keys);
+    machine = egt_image_alloc(c.lw, c.lh);
+    if (!c.rgb || !c.lab || !c.near1 || !c.near2 || !c.darker || !c.lighter || !opts || !nopts ||
+        !sets || !cell_pal || !keys || !machine.pixels)
         goto done;
 
     /* The image in machine pixels (wide ones average their two). */
@@ -1045,17 +896,49 @@ bool egt__convert_limited(const EgtImage *src, EgtImage *dst, const EgtPalette *
         }
     }
 
-    /* 4. Draw, then widen back to the output. */
-    draw(&c, sets, opt, kernel, out, err);
-    for (y = 0; y < src->height; y++)
-        for (x = 0; x < src->width; x++) {
-            const EgtColor *col = &pal->colors[out[(size_t)y * c.lw + x / def->wide]];
-            uint8_t *d = dst->pixels + ((size_t)y * dst->width + x) * 4;
-            d[0] = col->r;
-            d[1] = col->g;
-            d[2] = col->b;
-            d[3] = 255;
+    /* 4. Draw: each distinct set becomes a palette, and the image in
+     * machine pixels is dithered with them, then widened back. */
+    for (cell = 0; cell < ncells; cell++) {
+        sort_set(&sets[cell]);
+        keys[cell].key = set_key(&sets[cell]);
+        keys[cell].cell = cell;
+    }
+    qsort(keys, (size_t)ncells, sizeof *keys, compare_keys);
+    for (i = 0; i < ncells; i++)
+        npals += i == 0 || keys[i].key != keys[i - 1].key;
+    pals = malloc((size_t)npals * sizeof *pals);
+    if (!pals)
+        goto done;
+    npals = 0;
+    for (i = 0; i < ncells; i++) {
+        const CSet *s = &sets[keys[i].cell];
+        if (i == 0 || keys[i].key != keys[i - 1].key) {
+            int k;
+            pals[npals].count = s->n;
+            for (k = 0; k < s->n; k++)
+                pals[npals].colors[k] = pal->colors[s->c[k]];
+            npals++;
         }
+        cell_pal[keys[i].cell] = npals - 1;
+    }
+    for (y = 0; y < c.lh; y++)
+        for (x = 0; x < c.lw; x++) {
+            const float *q = c.rgb + ((size_t)y * c.lw + x) * 3;
+            uint8_t *m = machine.pixels + ((size_t)y * c.lw + x) * 4;
+            m[0] = (uint8_t)(q[0] + 0.5f);
+            m[1] = (uint8_t)(q[1] + 0.5f);
+            m[2] = (uint8_t)(q[2] + 0.5f);
+            m[3] = 255;
+        }
+    {
+        EgtPalMap map = { pals, npals, cell_pal, def->cell_w, def->cell_h, c.cw };
+        if (!egt__dither(&machine, &machine, &map, opt))
+            goto done;
+    }
+    for (y = 0; y < src->height; y++)
+        for (x = 0; x < src->width; x++)
+            memcpy(dst->pixels + ((size_t)y * dst->width + x) * 4,
+                   machine.pixels + ((size_t)y * c.lw + x / def->wide) * 4, 4);
     ok = true;
 done:
     free(c.mix);
@@ -1069,7 +952,9 @@ done:
     free(opts);
     free(nopts);
     free(sets);
-    free(out);
-    free(err);
+    free(pals);
+    free(cell_pal);
+    free(keys);
+    egt_image_free(&machine);
     return ok;
 }

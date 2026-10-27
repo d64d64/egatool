@@ -759,6 +759,12 @@ static void put(uint8_t *p, EgtColor c)
     p[3] = 255;
 }
 
+/* Which of the map's palettes pixel (x, y) uses. */
+static int pal_of(const EgtPalMap *m, int x, int y)
+{
+    return m->cell[(y / m->cell_h) * m->across + x / m->cell_w];
+}
+
 /* Groups pixels into regions of 8-connected equal labels. order[] lists
  * pixels grouped by region; region r is order[start[r] .. start[r+1]-1].
  * region[] gets each pixel's region index. Returns the region count. */
@@ -874,23 +880,26 @@ bool egt_dither_supports_cleanup(EgtDither d)
 
 /* None: every pixel becomes its nearest palette colour, then specks under
  * min_region pixels are cleaned up. */
-static bool convert_none(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
+static bool convert_none(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
                          int min_region)
 {
-    size_t i, n = (size_t)src->width * (size_t)src->height;
-    uint16_t *lab = malloc(n * sizeof(uint16_t));
+    int w = src->width, h = src->height, x, y;
+    uint16_t *lab = malloc((size_t)w * h * sizeof(uint16_t));
     if (!lab)
         return false;
-    for (i = 0; i < n; i++) {
-        const uint8_t *s = src->pixels + i * 4;
-        lab[i] = (uint16_t)nearest(pal, s[0], s[1], s[2]);
-    }
-    if (min_region > 1 && !cleanup_regions(lab, src->width, src->height, pal->count, min_region)) {
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            const uint8_t *s = src->pixels + ((size_t)y * w + x) * 4;
+            lab[(size_t)y * w + x] = (uint16_t)nearest(&map->pals[pal_of(map, x, y)], s[0], s[1], s[2]);
+        }
+    if (min_region > 1 && !cleanup_regions(lab, w, h, map->pals[0].count, min_region)) {
         free(lab);
         return false;
     }
-    for (i = 0; i < n; i++)
-        put(dst->pixels + i * 4, pal->colors[lab[i]]);
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+            put(dst->pixels + ((size_t)y * w + x) * 4,
+                map->pals[pal_of(map, x, y)].colors[lab[(size_t)y * w + x]]);
     free(lab);
     return true;
 }
@@ -920,7 +929,7 @@ static int dither_amount(const EgtPalette *pal, const uint8_t *s, int snap, int 
     return (int)((d - snap) * 256 / snap);
 }
 
-static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
+static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalMap *map, int snap)
 {
     static const int BAYER4[4][4] = {
         { 0,  8,  2, 10},
@@ -928,13 +937,14 @@ static void convert_ordered(const EgtImage *src, EgtImage *dst, const EgtPalette
         { 3, 11,  1,  9},
         {15,  7, 13,  5},
     };
-    /* Roughly the distance between neighbouring palette colours. */
-    int spread = (int)(255.0 / cbrt((double)pal->count));
     int x, y, k;
     for (y = 0; y < src->height; y++) {
         for (x = 0; x < src->width; x++) {
             size_t o = ((size_t)y * src->width + x) * 4;
             const uint8_t *s = src->pixels + o;
+            const EgtPalette *pal = &map->pals[pal_of(map, x, y)];
+            /* Roughly the distance between neighbouring palette colours. */
+            int spread = (int)(255.0 / cbrt((double)pal->count));
             int amount = dither_amount(pal, s, snap, &k);
             int t = (BAYER4[y & 3][x & 3] * 2 - 15) * spread / 32 * amount / 256;
             if (amount > 0)
@@ -1016,7 +1026,7 @@ static void ordered_mix(const EgtPalette *pal, const uint8_t *s, int *a_out, int
 /* Mixes are cached by colour: pictures repeat colours a lot. */
 #define MIX_CACHE 65536
 
-static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalette *pal, int snap)
+static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalMap *map, int snap)
 {
     static const int BAYER4[4][4] = {
         { 0,  8,  2, 10},
@@ -1024,8 +1034,9 @@ static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalett
         { 3, 11,  1,  9},
         {15,  7, 13,  5},
     };
-    uint32_t *keys = malloc(MIX_CACHE * sizeof *keys);
-    uint8_t (*mixes)[3] = malloc(MIX_CACHE * sizeof *mixes);
+    /* Only with one palette: a colour's mix depends on it. */
+    uint32_t *keys = map->npals == 1 ? malloc(MIX_CACHE * sizeof *keys) : NULL;
+    uint8_t (*mixes)[3] = map->npals == 1 ? malloc(MIX_CACHE * sizeof *mixes) : NULL;
     int x, y, k;
     if (keys)
         for (k = 0; k < MIX_CACHE; k++)
@@ -1034,6 +1045,7 @@ static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalett
         for (x = 0; x < src->width; x++) {
             size_t o = ((size_t)y * src->width + x) * 4;
             const uint8_t *s = src->pixels + o;
+            const EgtPalette *pal = &map->pals[pal_of(map, x, y)];
             int amount = dither_amount(pal, s, snap, &k);
             if (amount > 0) {
                 int a, b, m;
@@ -1061,9 +1073,34 @@ static void convert_ordered2(const EgtImage *src, EgtImage *dst, const EgtPalett
     free(mixes);
 }
 
+typedef struct {
+    int dx, dy, w;
+} KernelTap;
+
+typedef struct {
+    int divisor;
+    int ntaps;
+    KernelTap taps[12];
+} Kernel;
+
+static const Kernel KERNEL_FLOYD = { 16, 4, {
+    {1, 0, 7}, {-1, 1, 3}, {0, 1, 5}, {1, 1, 1} } };
+static const Kernel KERNEL_BURKES = { 32, 7, {
+    {1, 0, 8}, {2, 0, 4},
+    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 8}, {1, 1, 4}, {2, 1, 2} } };
+static const Kernel KERNEL_SIERRA = { 32, 10, {
+    {1, 0, 5}, {2, 0, 3},
+    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 5}, {1, 1, 4}, {2, 1, 2},
+    {-1, 2, 2}, {0, 2, 3}, {1, 2, 2} } };
+static const Kernel KERNEL_STUCKI = { 42, 12, {
+    {1, 0, 8}, {2, 0, 4},
+    {-2, 1, 2}, {-1, 1, 4}, {0, 1, 8}, {1, 1, 4}, {2, 1, 2},
+    {-2, 2, 1}, {-1, 2, 2}, {0, 2, 4}, {1, 2, 2}, {2, 2, 1} } };
+
 /* Error diffusion with a rolling buffer of 3 error rows, padded by 2 pixels
- * on each side so taps never need bounds checks. */
-static bool convert_diffuse(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
+ * on each side so taps never need bounds checks. Error stays out of cells
+ * with another palette: there it would pile up along the cell edge. */
+static bool convert_diffuse(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
                             const Kernel *k, int snap)
 {
     int w = src->width, h = src->height;
@@ -1079,6 +1116,8 @@ static bool convert_diffuse(const EgtImage *src, EgtImage *dst, const EgtPalette
             size_t o = ((size_t)y * w + x) * 4;
             const uint8_t *s = src->pixels + o;
             int *e = row + (size_t)(x + 2) * 3;
+            int pi = pal_of(map, x, y);
+            const EgtPalette *pal = &map->pals[pi];
             int ci, amount = dither_amount(pal, s, snap, &ci);
             int r, g, b, er, eg, eb;
             EgtColor c;
@@ -1097,8 +1136,10 @@ static bool convert_diffuse(const EgtImage *src, EgtImage *dst, const EgtPalette
             put(dst->pixels + o, c);
             for (t = 0; t < k->ntaps; t++) {
                 const KernelTap *tap = &k->taps[t];
-                int *te = err + (size_t)((y + tap->dy) % 3) * stride
-                              + (size_t)(x + 2 + tap->dx) * 3;
+                int tx = x + tap->dx, ty = y + tap->dy;
+                int *te = err + (size_t)(ty % 3) * stride + (size_t)(tx + 2) * 3;
+                if (tx >= 0 && tx < w && ty < h && pal_of(map, tx, ty) != pi)
+                    continue;
                 te[0] += er * tap->w;
                 te[1] += eg * tap->w;
                 te[2] += eb * tap->w;
@@ -1205,7 +1246,12 @@ static float tie_preference(const uint8_t *s, const EgtPalette *pal, const Check
     return along - across;
 }
 
-bool egt__keep_solid(float solid_dist, float mix_dist, int prefer_solid)
+/* Each step of "Prefer solid" (0..100) lets the nearest solid colour be
+ * this much further from the source (RGB distance) than the best
+ * two-colour mix and still be used. */
+#define PREFER_SOLID_STEP 0.25f
+
+static bool keep_solid(float solid_dist, float mix_dist, int prefer_solid)
 {
     return solid_dist <= mix_dist + PREFER_SOLID_STEP * prefer_solid;
 }
@@ -1257,7 +1303,7 @@ static uint16_t checker_label(const uint8_t *s, const EgtPalette *pal, const Che
         int dg = s[1] - pal->colors[solid].g;
         int db = s[2] - pal->colors[solid].b;
         float solid_dist = sqrtf((float)(dr * dr + dg * dg + db * db));
-        return (uint16_t)(egt__keep_solid(solid_dist, sqrtf((float)score[best]), prefer_solid)
+        return (uint16_t)(keep_solid(solid_dist, sqrtf((float)score[best]), prefer_solid)
                           ? solid : n + best);
     }
 }
@@ -1325,51 +1371,59 @@ static int32_t *surface_sizes(const EgtImage *src, int cap)
 
 /* Each pixel is either the nearest solid colour or, if a 50/50 mix of two
  * colours looks closer by more than prefer_solid allows (see
- * egt__keep_solid), one half of a checkerboard.
+ * keep_solid), one half of a checkerboard.
  * With harsh_mix, pixels in small source areas (details, lines, edges) are
  * labelled with the harsh pair penalty, so colour noise there calms down
  * while large surfaces keep their original pairs.
  * Labels 0..n-1 are solid colours, n + i is colour pair i. */
-static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
+static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
                             const EgtConvertOptions *opt)
 {
     int prefer_solid = opt->prefer_solid, harsh_mix = opt->harsh_mix, min_region = opt->min_region;
     const EgtImage *detail = opt->detail;
-    int n = pal->count, npairs = n * (n + 1) / 2;
     int w = src->width, h = src->height;
     size_t npix = (size_t)w * h, i;
-    int a, b, x, y, p = 0;
+    int a, b, x, y, q, maxn = 0, stride;
     int area = egt_harsh_mix_area(harsh_mix, w, h);
     CheckerPair *pairs;
     uint16_t *lab;
 
-    if (n > EGT_CHECKER_MAX_COLORS)
+    for (q = 0; q < map->npals; q++)
+        maxn = map->pals[q].count > maxn ? map->pals[q].count : maxn;
+    if (maxn > EGT_CHECKER_MAX_COLORS)
         return false;
-    pairs = malloc((size_t)npairs * sizeof *pairs);
+    /* Each palette's pairs, stride apart (a pair of equal colours is a
+     * solid colour, so a pair index is valid for any palette). */
+    stride = maxn * (maxn + 1) / 2;
+    pairs = malloc((size_t)map->npals * stride * sizeof *pairs);
     lab = malloc(npix * sizeof(uint16_t));
     if (!pairs || !lab) {
         free(pairs);
         free(lab);
         return false;
     }
-    for (a = 0; a < n; a++) {
-        for (b = a; b < n; b++, p++) {
-            if (opt->light_mix > 0) {
-                const EgtColor *ca = &pal->colors[a], *cb = &pal->colors[b];
-                /* Quadratic: fine steps at the low end, where a small change
-                 * already decides between near-equal pairs. */
-                double t = (opt->light_mix > 100 ? 100 : opt->light_mix) / 100.0;
-                double g = 1.0 + 1.2 * t * t;
-                pairs[p].r = gamma_mix(ca->r, cb->r, g);
-                pairs[p].g = gamma_mix(ca->g, cb->g, g);
-                pairs[p].b = gamma_mix(ca->b, cb->b, g);
-            } else {
-                pairs[p].r = (pal->colors[a].r + pal->colors[b].r) / 2;
-                pairs[p].g = (pal->colors[a].g + pal->colors[b].g) / 2;
-                pairs[p].b = (pal->colors[a].b + pal->colors[b].b) / 2;
+    for (q = 0; q < map->npals; q++) {
+        const EgtPalette *pal = &map->pals[q];
+        CheckerPair *pp = pairs + (size_t)q * stride;
+        for (a = 0; a < pal->count; a++) {
+            for (b = a; b < pal->count; b++, pp++) {
+                if (opt->light_mix > 0) {
+                    const EgtColor *ca = &pal->colors[a], *cb = &pal->colors[b];
+                    /* Quadratic: fine steps at the low end, where a small change
+                     * already decides between near-equal pairs. */
+                    double t = (opt->light_mix > 100 ? 100 : opt->light_mix) / 100.0;
+                    double g = 1.0 + 1.2 * t * t;
+                    pp->r = gamma_mix(ca->r, cb->r, g);
+                    pp->g = gamma_mix(ca->g, cb->g, g);
+                    pp->b = gamma_mix(ca->b, cb->b, g);
+                } else {
+                    pp->r = (pal->colors[a].r + pal->colors[b].r) / 2;
+                    pp->g = (pal->colors[a].g + pal->colors[b].g) / 2;
+                    pp->b = (pal->colors[a].b + pal->colors[b].b) / 2;
+                }
+                pp->a = (uint8_t)a;
+                pp->b2 = (uint8_t)b;
             }
-            pairs[p].a = (uint8_t)a;
-            pairs[p].b2 = (uint8_t)b;
         }
     }
 
@@ -1381,33 +1435,42 @@ static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette
             return false;
         }
         int absent[EGT_CHECKER_MAX_COLORS];
-        /* Labels of plain (not calmed) pixels depend only on their colour,
-         * and images repeat colours a lot: cache them by colour in an
-         * open-addressing table (key 0 = empty, so keys are rgb + 1). */
+        /* Labels of plain (not calmed) pixels depend only on their colour
+         * (with one palette), and images repeat colours a lot: cache them
+         * by colour in an open-addressing table (key 0 = empty, so keys
+         * are rgb + 1). */
         size_t cap = 1024, mask;
-        uint32_t *keys;
-        uint16_t *vals;
+        uint32_t *keys = NULL;
+        uint16_t *vals = NULL;
         while (cap < npix * 2)
             cap *= 2;
         mask = cap - 1;
-        keys = calloc(cap, sizeof *keys);
-        vals = malloc(cap * sizeof *vals);
-        if (!keys || !vals) {
-            free(keys);
-            free(vals);
-            free(size);
-            free(pairs);
-            free(lab);
-            return false;
+        if (map->npals == 1) {
+            keys = calloc(cap, sizeof *keys);
+            vals = malloc(cap * sizeof *vals);
+            if (!keys || !vals) {
+                free(keys);
+                free(vals);
+                free(size);
+                free(pairs);
+                free(lab);
+                return false;
+            }
         }
         if (!detail)
             detail = src;
         for (i = 0; i < npix; i++) {
             const uint8_t *s = src->pixels + i * 4;
+            int px = (int)(i % w), py = (int)(i / w), pi = pal_of(map, px, py);
+            const EgtPalette *pal = &map->pals[pi];
+            const CheckerPair *pp = pairs + (size_t)pi * stride;
+            int np = pal->count * (pal->count + 1) / 2;
             bool calm = area < 0 || (size && size[i] <= area);
             if (calm) {
-                colour_absence(detail, w, h, (int)(i % w), (int)(i / w), pal, absent);
-                lab[i] = checker_label(s, pal, pairs, npairs, prefer_solid, absent);
+                colour_absence(detail, w, h, px, py, pal, absent);
+                lab[i] = checker_label(s, pal, pp, np, prefer_solid, absent);
+            } else if (!keys) {
+                lab[i] = checker_label(s, pal, pp, np, prefer_solid, NULL);
             } else {
                 uint32_t key = ((uint32_t)s[0] << 16 | (uint32_t)s[1] << 8 | s[2]) + 1;
                 size_t slot = (key * 2654435761u) & mask;
@@ -1415,7 +1478,7 @@ static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette
                     slot = (slot + 1) & mask;
                 if (!keys[slot]) {
                     keys[slot] = key;
-                    vals[slot] = checker_label(s, pal, pairs, npairs, prefer_solid, NULL);
+                    vals[slot] = checker_label(s, pal, pp, np, prefer_solid, NULL);
                 }
                 lab[i] = vals[slot];
             }
@@ -1425,7 +1488,8 @@ static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette
         free(size);
     }
 
-    if (min_region > 1 && !cleanup_regions(lab, w, h, n + npairs, min_region)) {
+    if (min_region > 1 &&
+        !cleanup_regions(lab, w, h, maxn + stride, min_region)) {
         free(pairs);
         free(lab);
         return false;
@@ -1433,11 +1497,12 @@ static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette
 
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) {
-            int l = lab[(size_t)y * w + x];
-            if (l < n) {
+            int l = lab[(size_t)y * w + x], pi = pal_of(map, x, y);
+            const EgtPalette *pal = &map->pals[pi];
+            if (l < pal->count) {
                 put(dst->pixels + ((size_t)y * w + x) * 4, pal->colors[l]);
             } else {
-                const CheckerPair *pr = &pairs[l - n];
+                const CheckerPair *pr = &pairs[(size_t)pi * stride + l - pal->count];
                 put(dst->pixels + ((size_t)y * w + x) * 4,
                     pal->colors[((x ^ y) & 1) ? pr->b2 : pr->a]);
             }
@@ -1448,28 +1513,37 @@ static bool convert_checker(const EgtImage *src, EgtImage *dst, const EgtPalette
     return true;
 }
 
+bool egt__dither(const EgtImage *src, EgtImage *dst, const EgtPalMap *map,
+                 const EgtConvertOptions *opt)
+{
+    EgtConvertOptions o = *opt;
+    /* Cleanup merges equal labels, which mean different colours under
+     * different palettes. */
+    if (map->npals > 1)
+        o.min_region = 0;
+    switch (o.dither) {
+    case EGT_DITHER_NONE:            return convert_none(src, dst, map, o.min_region);
+    case EGT_DITHER_ORDERED:         convert_ordered(src, dst, map, o.snap); return true;
+    case EGT_DITHER_ORDERED2:        convert_ordered2(src, dst, map, o.snap); return true;
+    case EGT_DITHER_BURKES:          return convert_diffuse(src, dst, map, &KERNEL_BURKES, o.snap);
+    case EGT_DITHER_FLOYD_STEINBERG: return convert_diffuse(src, dst, map, &KERNEL_FLOYD, o.snap);
+    case EGT_DITHER_SIERRA:          return convert_diffuse(src, dst, map, &KERNEL_SIERRA, o.snap);
+    case EGT_DITHER_STUCKI:          return convert_diffuse(src, dst, map, &KERNEL_STUCKI, o.snap);
+    case EGT_DITHER_EGA_CHECKER:     return convert_checker(src, dst, map, &o);
+    default:                         return false;
+    }
+}
+
 bool egt_convert(const EgtImage *src, EgtImage *dst, const EgtPalette *pal,
                  const EgtConvertOptions *opt)
 {
+    int only = 0;
+    EgtPalMap map = { pal, 1, &only, 0, 0, 1 };
     if (pal->count < 1 || src->width != dst->width || src->height != dst->height)
         return false;
-    if (opt->limit > EGT_LIMIT_NONE && opt->limit < EGT_LIMIT_COUNT) {
-        const Kernel *k = opt->dither == EGT_DITHER_BURKES ? &KERNEL_BURKES
-                        : opt->dither == EGT_DITHER_FLOYD_STEINBERG ? &KERNEL_FLOYD
-                        : opt->dither == EGT_DITHER_SIERRA ? &KERNEL_SIERRA
-                        : opt->dither == EGT_DITHER_STUCKI ? &KERNEL_STUCKI : NULL;
-        return egt__convert_limited(src, dst, pal, opt, k);
-    }
-    switch (opt->dither) {
-    case EGT_DITHER_NONE:            return convert_none(src, dst, pal, opt->min_region);
-    case EGT_DITHER_ORDERED:         convert_ordered(src, dst, pal, opt->snap); return true;
-    case EGT_DITHER_ORDERED2:        convert_ordered2(src, dst, pal, opt->snap); return true;
-    case EGT_DITHER_BURKES:          return convert_diffuse(src, dst, pal, &KERNEL_BURKES, opt->snap);
-    case EGT_DITHER_FLOYD_STEINBERG: return convert_diffuse(src, dst, pal, &KERNEL_FLOYD, opt->snap);
-    case EGT_DITHER_SIERRA:          return convert_diffuse(src, dst, pal, &KERNEL_SIERRA, opt->snap);
-    case EGT_DITHER_STUCKI:          return convert_diffuse(src, dst, pal, &KERNEL_STUCKI, opt->snap);
-    case EGT_DITHER_EGA_CHECKER:
-        return convert_checker(src, dst, pal, opt);
-    default:                         return false;
-    }
+    if (opt->limit > EGT_LIMIT_NONE && opt->limit < EGT_LIMIT_COUNT)
+        return egt__convert_limited(src, dst, pal, opt);
+    map.cell_w = src->width;
+    map.cell_h = src->height;
+    return egt__dither(src, dst, &map, opt);
 }
