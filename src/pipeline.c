@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Recipes leave out default values, so changing a default changes how
+ * saved settings replay. */
 void egt_settings_default(EgtSettings *s)
 {
     memset(s, 0, sizeof *s);
@@ -81,47 +83,48 @@ void egt_settings_normalize(EgtSettings *s)
 {
     EgtConvertOptions *o = &s->opt;
     EgtFilters *f = &s->filt;
+    EgtSettings d;
     bool checker = o->dither == EGT_DITHER_EGA_CHECKER;
+    egt_settings_default(&d);
 
     s->adj.saturation = two_decimals(s->adj.saturation);
     if (s->adj.saturation == 0.0f)
         s->adj.saturation = 0.0f; /* not -0 */
-
-    /* Unused values go back to their defaults (still valid). */
-    if (f->smooth == EGT_SMOOTH_NONE)
-        f->smooth_radius = 1.0f;
-    else
+    f->outline_darkness = two_decimals(f->outline_darkness);
+    if (f->smooth != EGT_SMOOTH_NONE)
         f->smooth_radius = egt_snap_radius(f->smooth_radius);
-    if (f->smooth != EGT_SMOOTH_SURFACE)
-        f->smooth_threshold = 25;
-    if (f->outline <= 0) {
+    if (o->min_region <= 1)
+        o->min_region = 0;
+    if (f->outline < 0)
         f->outline = 0;
-        f->outline_mode = EGT_OUTLINE_BASIC;
-        f->outline_darkness = 1.0f;
-        f->outline_min_length = 0;
-    } else {
-        f->outline_darkness = two_decimals(f->outline_darkness);
-    }
-    f->outline_mask = NULL;
 
-    if (checker) {
-        o->snap = 0;
+    /* Values that don't apply go back to their defaults. */
+    if (f->smooth == EGT_SMOOTH_NONE)
+        f->smooth_radius = d.filt.smooth_radius;
+    if (f->smooth != EGT_SMOOTH_SURFACE)
+        f->smooth_threshold = d.filt.smooth_threshold;
+    if (f->outline == 0) {
+        f->outline_mode = d.filt.outline_mode;
+        f->outline_darkness = d.filt.outline_darkness;
+        f->outline_min_length = d.filt.outline_min_length;
+    }
+    if (!checker) {
+        o->prefer_solid = d.opt.prefer_solid;
+        o->light_mix = d.opt.light_mix;
+    }
+    if (!checker || o->limit != EGT_LIMIT_NONE)
+        o->harsh_mix = d.opt.harsh_mix;
+    if (checker || o->dither == EGT_DITHER_NONE)
+        o->snap = d.opt.snap;
+    if (checker)
         s->calibrate = false;
-    } else {
-        o->prefer_solid = o->harsh_mix = o->light_mix = 0;
-        if (o->dither == EGT_DITHER_NONE)
-            o->snap = 0;
-    }
     if (!s->calibrate)
-        s->calibrate_max = 0;
-    if (o->limit != EGT_LIMIT_NONE) {
-        o->harsh_mix = 0;
-        o->min_region = 0;
-    } else {
-        o->consistency = 0;
-    }
-    if (o->min_region <= 1 || !egt_dither_supports_cleanup(o->dither))
-        o->min_region = 0;
+        s->calibrate_max = d.calibrate_max;
+    if (o->limit == EGT_LIMIT_NONE)
+        o->consistency = d.opt.consistency;
+    if (o->limit != EGT_LIMIT_NONE || !egt_dither_supports_cleanup(o->dither))
+        o->min_region = d.opt.min_region;
+    f->outline_mask = NULL;
     o->detail = NULL;
 }
 

@@ -381,7 +381,8 @@ adjustments, i.e. what the converter actually sees.
   CLI: settings, their checks and defaults, and the run with its errors
 - `src/imageio.[ch]` – load/save via stb_image
 - `src/clipboard.[ch]` – Win32 clipboard, or wl-clipboard/xclip on Linux
-- `src/recipe.[ch]` – the settings as a CLI command line, saved in PNGs
+- `src/recipe.[ch]` – the command line language: reads the options, and
+  writes settings back as a command line (saved in PNGs)
 - `src/gui.c` – raylib/raygui front end, converting on a worker thread
   (`raygui_impl.c`: raygui compiled on its own)
 - `src/thread.[ch]` – pthreads or Win32 threads for the worker

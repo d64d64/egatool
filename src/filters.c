@@ -9,20 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *SMOOTH_NAMES[EGT_SMOOTH_COUNT] = { "None", "Median", "Kuwahara", "Surface" };
-
-static const char *OUTLINE_NAMES[EGT_OUTLINE_COUNT] = { "Basic", "Hi-res" };
-
-const char *egt_smooth_name(EgtSmooth s)
-{
-    return (s >= 0 && s < EGT_SMOOTH_COUNT) ? SMOOTH_NAMES[s] : "?";
-}
-
-const char *egt_outline_mode_name(EgtOutlineMode m)
-{
-    return (m >= 0 && m < EGT_OUTLINE_COUNT) ? OUTLINE_NAMES[m] : "?";
-}
-
 /* Taps of a 1-D box filter from src_n to dst_n samples: output i averages
  * the source interval [i, i + 1) * src_n / dst_n, each source sample
  * weighted by how much of it lies inside (partly covered samples at the

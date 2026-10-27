@@ -31,7 +31,7 @@
 #include "engine_int.h"
 
 typedef struct {
-    const char *name, *arg, *desc;
+    const char *name, *desc;
     int cell_w, cell_h; /* in the machine's pixels (a wide pixel counts once) */
     int wide;           /* 2: pixels are double width */
     int per_cell;       /* colours each cell picks */
@@ -43,17 +43,17 @@ typedef struct {
 } LimitDef;
 
 static const LimitDef LIMITS[EGT_LIMIT_COUNT] = {
-    { "None", "none", "Any colour anywhere",
+    { "None", "Any colour anywhere",
       1, 1, 1, 0, false, 0, false, EGT_PAL_EGA, 320, 200 },
-    { "ZX Spectrum", "spectrum", "2 colours per 8x8 cell,\nboth bright or both normal",
+    { "ZX Spectrum", "2 colours per 8x8 cell,\nboth bright or both normal",
       8, 8, 1, 2, false, 0, true, EGT_PAL_SPECTRUM, 256, 192 },
-    { "C64 hi-res", "c64", "2 colours per 8x8 cell",
+    { "C64 hi-res", "2 colours per 8x8 cell",
       8, 8, 1, 2, false, 0, false, EGT_PAL_C64, 320, 200 },
-    { "C64 multicolour", "c64-multi", "Double-wide pixels, 3 colours\nper 4x8 cell + 1 background",
+    { "C64 multicolour", "Double-wide pixels, 3 colours\nper 4x8 cell + 1 background",
       4, 8, 2, 3, true, 0, false, EGT_PAL_C64, 320, 200 },
-    { "MSX", "msx", "2 colours per 8x1 line",
+    { "MSX", "2 colours per 8x1 line",
       8, 1, 1, 2, false, 0, false, EGT_PAL_MSX, 256, 192 },
-    { "NES", "nes", "16x16 areas: 1 of 4 palettes\nof 3 colours + 1 background",
+    { "NES", "16x16 areas: 1 of 4 palettes\nof 3 colours + 1 background",
       16, 16, 1, 3, true, 4, false, EGT_PAL_NES, 256, 240 },
 };
 
@@ -64,7 +64,6 @@ static const LimitDef *limit_def(EgtLimit l)
 }
 
 const char *egt_limit_name(EgtLimit l) { return limit_def(l)->name; }
-const char *egt_limit_arg(EgtLimit l) { return limit_def(l)->arg; }
 const char *egt_limit_desc(EgtLimit l) { return limit_def(l)->desc; }
 
 void egt_limit_machine(EgtLimit l, EgtBuiltinPalette *pal, int *width, int *height)

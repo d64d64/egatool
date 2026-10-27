@@ -152,7 +152,6 @@ typedef struct {
 
 const char *egt_dither_name(EgtDither d);
 const char *egt_limit_name(EgtLimit l);
-const char *egt_limit_arg(EgtLimit l);  /* command-line name: "spectrum"... */
 const char *egt_limit_desc(EgtLimit l); /* one line on the rule */
 /* The machine's own palette and screen size, for picking them along with
  * the limit (they can still be changed afterwards). */
@@ -206,10 +205,6 @@ int egt_calibrate(EgtImage *img, const EgtPalette *pal, int max_shift, EgtCalibA
 
 /* Brightness/contrast/saturation, in place. */
 void egt_adjust(EgtImage *img, const EgtAdjust *adj);
-
-const char *egt_smooth_name(EgtSmooth s);
-
-const char *egt_outline_mode_name(EgtOutlineMode m);
 
 /* Canny edge detection on the full-resolution source, reduced to a
  * width x height mask (1 = outline pixel). Returns NULL on allocation

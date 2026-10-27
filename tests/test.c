@@ -711,7 +711,8 @@ static void test_cli_validation(void)
         "--saturation 2", "--snap -1", "--snap 65", "--consistency 301", "-s 16x16garbage",
         "-s 0x10", "--radius 9", "--threshold 0", "--outline-dark 1.5", "--prefer-solid 101",
         "--light-mix x", "--harsh-mix 5x", "-x 9", "--min-region -3", "--calibrate-max -1",
-        "--outline 999999999999",
+        "--outline 999999999999", "-d foo", "--limit zx", "--smooth wobble",
+        "--outline-mode fine", "--bias 5",
     };
     static const char *good[] = {
         "--brightness -128", "--contrast -127", "--saturation 1", "--snap 64", "-s 50%",

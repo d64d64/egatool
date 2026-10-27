@@ -35,9 +35,10 @@ void egt_settings_default(EgtSettings *s);
 const char *egt_settings_check(const EgtSettings *s);
 
 /* Puts the settings in the form they are processed and recorded in: values
- * that don't apply are cleared (no snap for checkerboard...), and values
- * are rounded as a saved recipe writes them (2 decimals, radius snapped).
- * Two settings that give the same result then compare equal. */
+ * that don't apply go back to their defaults (no snap for checkerboard...),
+ * and values are rounded as a saved recipe writes them (2 decimals, radius
+ * snapped). Two settings that give the same result then compare equal.
+ * This is the one place that says which settings apply. */
 void egt_settings_normalize(EgtSettings *s);
 
 /* Intermediate results kept between runs on the same source (the GUI
