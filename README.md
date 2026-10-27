@@ -289,7 +289,8 @@ Colours are chosen with following process:
   neighbours don't use, and may take a neighbour's colours outright, so
   flat areas and gradients don't break into blocks. 0 fits each cell
   alone; above 100, large areas share colours at the cost of some hue.
-- **Drawing** dithers each pixel with its own cell's colours only.
+- **Drawing** dithers each pixel with its own cell's colours only. Ordered
+  then mixes the cell's colours as Ordered 2-colour does.
 
 With a limit chosen, *Calm harsh mixes* and *Clean up* don't apply, and
 Checkerboard mode works with palettes of any size (the pairs come from each
