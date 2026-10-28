@@ -1384,6 +1384,10 @@ int main(int argc, char **argv)
     SetTraceLogLevel(LOG_WARNING);
     /* Wide enough for every panel column, but within the screen. */
     InitWindow(1720, 960, "EGAtool " EGT_VERSION);
+    if (!IsWindowReady()) {
+        fprintf(stderr, "egatool: cannot open a window (no display?); egatool-cli works without one\n");
+        return 1;
+    }
     {
         /* Title bar and taskbar icon (the .exe resource only covers Explorer). */
         Image icon = { ICON_RGBA, ICON_W, ICON_H, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
